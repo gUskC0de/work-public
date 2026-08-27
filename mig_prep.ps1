@@ -106,12 +106,12 @@ try {
     $signedDriver = Get-CimInstance Win32_PnPSignedDriver -Filter "Service='vioscsi'" -ErrorAction SilentlyContinue | Select-Object -First 1
     [string[]]$scOutput = @(& sc.exe query vioscsi 2>&1 | ForEach-Object { $_.ToString() })
     $scExitCode = $LASTEXITCODE
-    $scServiceExists = $scExitCode -eq 0
+    $scServiceInstalled = $scExitCode -eq 0 -and ($scOutput -match '^\s*SERVICE_NAME:\s*vioscsi\s*$')
     $scState = 'NOT_INSTALLED'
     $stateLine = $scOutput | Where-Object { $_ -match 'STATE\s+:\s+\d+\s+(\w+)' } | Select-Object -First 1
     if ($stateLine -and $stateLine -match 'STATE\s+:\s+\d+\s+(\w+)') {
         $scState = $Matches[1]
-    } elseif ($scServiceExists) {
+    } elseif ($scServiceInstalled) {
         $scState = 'UNKNOWN'
     }
     Write-Log "sc.exe query vioscsi exit code: $scExitCode"
@@ -133,15 +133,15 @@ try {
         driverVersion = if ($signedDriver) { $signedDriver.DriverVersion } else { $null }
         scServiceCheck = [ordered]@{
             name = 'vioscsi'
-            exists = $scServiceExists
+            installed = $scServiceInstalled
             state = $scState
             exitCode = $scExitCode
             rawOutput = $scOutput
         }
         criticalDeviceEntries = @($criticalEntries)
     }
-    if (-not $service -or -not $signedDriver -or -not $scServiceExists -or @($criticalEntries).Count -lt 2 -or (@($criticalEntries) | Where-Object service -ne 'vioscsi')) {
-        throw "Independent verification failed: vioscsi service, signed driver, or critical-device entries are missing."
+    if (-not $service -or -not $signedDriver -or -not $scServiceInstalled -or @($criticalEntries).Count -lt 2 -or (@($criticalEntries) | Where-Object service -ne 'vioscsi')) {
+        throw "Independent verification failed: vioscsi service is not installed, signed driver is missing, or critical-device entries are missing."
     }
     Set-Stage 'verification' 'Succeeded' 'vioscsi service, signed driver, and critical-device entries are present.'
     Write-Status 'Succeeded' 'VirtIO SCSI driver installed, initialized, and verified.' $verificationDetails
