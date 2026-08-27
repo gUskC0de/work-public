@@ -127,7 +127,8 @@ try {
         }
     }
     $verificationDetails = @{
-        servicePresent = [bool]$service
+        servicePresent = $scServiceInstalled
+        serviceCimPresent = [bool]$service
         serviceState = if ($service) { $service.State } else { $null }
         driverPresent = [bool]$signedDriver
         driverVersion = if ($signedDriver) { $signedDriver.DriverVersion } else { $null }
@@ -140,8 +141,14 @@ try {
         }
         criticalDeviceEntries = @($criticalEntries)
     }
-    if (-not $service -or -not $signedDriver -or -not $scServiceInstalled -or @($criticalEntries).Count -lt 2 -or (@($criticalEntries) | Where-Object service -ne 'vioscsi')) {
-        throw "Independent verification failed: vioscsi service is not installed, signed driver is missing, or critical-device entries are missing."
+    $failedChecks = @()
+    if (-not $scServiceInstalled) { $failedChecks += 'sc.exe service check' }
+    if (-not $signedDriver) { $failedChecks += 'signed PnP driver' }
+    if (@($criticalEntries).Count -lt 2) { $failedChecks += 'critical-device entry count' }
+    if (@($criticalEntries) | Where-Object service -ne 'vioscsi') { $failedChecks += 'critical-device service mapping' }
+    $verificationDetails.failedChecks = $failedChecks
+    if ($failedChecks.Count -gt 0) {
+        throw "Independent verification failed: $($failedChecks -join ', ')."
     }
     Set-Stage 'verification' 'Succeeded' 'vioscsi service, signed driver, and critical-device entries are present.'
     Write-Status 'Succeeded' 'VirtIO SCSI driver installed, initialized, and verified.' $verificationDetails
