@@ -50,7 +50,6 @@ To place the status and log files elsewhere:
 The runner verifies all of the following independently of the initialization script's console output:
 
 - the `vioscsi` Windows driver service exists
-- `sc.exe query vioscsi` reports `SERVICE_NAME: vioscsi`; the service is considered installed even when its state is `STOPPED`, and its exit code, state, and raw output are included in the status report and log
 - Windows reports a signed PnP driver for `vioscsi`
 - both VirtIO SCSI `CriticalDeviceDatabase` entries exist and point to `vioscsi`
 

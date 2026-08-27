@@ -104,18 +104,6 @@ try {
 
     $service = Get-CimInstance Win32_SystemDriver -Filter "Name='vioscsi'" -ErrorAction SilentlyContinue
     $signedDriver = Get-CimInstance Win32_PnPSignedDriver -Filter "Service='vioscsi'" -ErrorAction SilentlyContinue | Select-Object -First 1
-    [string[]]$scOutput = @(& sc.exe query vioscsi 2>&1 | ForEach-Object { $_.ToString() })
-    $scExitCode = $LASTEXITCODE
-    $scServiceInstalled = $scExitCode -eq 0 -and ($scOutput -match '^\s*SERVICE_NAME:\s*vioscsi\s*$')
-    $scState = 'NOT_INSTALLED'
-    $stateLine = $scOutput | Where-Object { $_ -match 'STATE\s+:\s+\d+\s+(\w+)' } | Select-Object -First 1
-    if ($stateLine -and $stateLine -match 'STATE\s+:\s+\d+\s+(\w+)') {
-        $scState = $Matches[1]
-    } elseif ($scServiceInstalled) {
-        $scState = 'UNKNOWN'
-    }
-    Write-Log "sc.exe query vioscsi exit code: $scExitCode"
-    $scOutput | ForEach-Object { Write-Log "sc.exe: $_" }
     $criticalPaths = @(
         'HKLM:\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_1AF4&DEV_1004',
         'HKLM:\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_1AF4&DEV_1004&SUBSYS_00081AF4&REV_00'
@@ -127,22 +115,14 @@ try {
         }
     }
     $verificationDetails = @{
-        servicePresent = $scServiceInstalled
-        serviceCimPresent = [bool]$service
+        servicePresent = [bool]$service
         serviceState = if ($service) { $service.State } else { $null }
         driverPresent = [bool]$signedDriver
         driverVersion = if ($signedDriver) { $signedDriver.DriverVersion } else { $null }
-        scServiceCheck = [ordered]@{
-            name = 'vioscsi'
-            installed = $scServiceInstalled
-            state = $scState
-            exitCode = $scExitCode
-            rawOutput = $scOutput
-        }
         criticalDeviceEntries = @($criticalEntries)
     }
     $failedChecks = @()
-    if (-not $scServiceInstalled) { $failedChecks += 'sc.exe service check' }
+    if (-not $service) { $failedChecks += 'vioscsi service' }
     if (-not $signedDriver) { $failedChecks += 'signed PnP driver' }
     if (@($criticalEntries).Count -lt 2) { $failedChecks += 'critical-device entry count' }
     if (@($criticalEntries) | Where-Object service -ne 'vioscsi') { $failedChecks += 'critical-device service mapping' }
