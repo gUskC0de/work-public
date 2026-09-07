@@ -45,6 +45,17 @@ To place the status and log files elsewhere:
 .\mig_prep.ps1 -StatusPath 'C:\ProgramData\VirtIO\driver-status.json' -LogPath 'C:\ProgramData\VirtIO\driver-install.log'
 ```
 
+## Offline use
+
+Download `virtio-win-guest-tools.exe` and `load-virtio-scsi-on-boot.ps1` on a machine with internet access, and copy them along with `mig_prep.ps1` onto the target VM (e.g. via a self-made ISO, USB drive, or shared folder). Then run as Administrator with `-Mode offline`, no internet access required:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\mig_prep.ps1 -Mode offline -InstallerSourcePath 'D:\virtio-win-guest-tools.exe' -InitScriptSourcePath 'D:\load-virtio-scsi-on-boot.ps1'
+```
+
+`-Mode` defaults to `online`, which downloads both files as before. `-Mode offline` requires both `-InstallerSourcePath` and `-InitScriptSourcePath`.
+
 ## Verification
 
 The runner verifies all of the following independently of the initialization script's console output:

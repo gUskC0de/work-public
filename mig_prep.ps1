@@ -1,11 +1,15 @@
 [CmdletBinding()]
 param(
+    [ValidateSet('online', 'offline')]
+    [string]$Mode = 'online',
     [string]$WorkingDirectory = (Join-Path $PSScriptRoot 'driver-work'),
     [string]$StatusPath = (Join-Path $PSScriptRoot 'driver-status.json'),
     [string]$LogPath = (Join-Path $PSScriptRoot 'driver-install.log'),
     [string]$ExpectedInstallerSha256 = '',
     [switch]$AllowUnsignedInstaller,
-    [switch]$KeepArtifacts
+    [switch]$KeepArtifacts,
+    [string]$InstallerSourcePath = '',
+    [string]$InitScriptSourcePath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -75,9 +79,21 @@ try {
     Assert-Administrator
     Set-Stage 'prerequisites' 'Succeeded' 'Running with administrator privileges.'
 
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
-    Invoke-WebRequest -Uri $initScriptUrl -OutFile $initScriptPath -UseBasicParsing
+    if ($Mode -eq 'offline') {
+        if (-not $InstallerSourcePath -or -not $InitScriptSourcePath) {
+            throw '-Mode offline requires -InstallerSourcePath and -InitScriptSourcePath.'
+        }
+        if (-not (Test-Path $InstallerSourcePath)) { throw "InstallerSourcePath not found: $InstallerSourcePath" }
+        if (-not (Test-Path $InitScriptSourcePath)) { throw "InitScriptSourcePath not found: $InitScriptSourcePath" }
+        Copy-Item -Path $InstallerSourcePath -Destination $installerPath -Force
+        Copy-Item -Path $InitScriptSourcePath -Destination $initScriptPath -Force
+        $stageMessage = 'Used local offline installer and init script.'
+    } else {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
+        Invoke-WebRequest -Uri $initScriptUrl -OutFile $initScriptPath -UseBasicParsing
+        $stageMessage = 'Downloaded installer and init script.'
+    }
     $installerHash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash
     if ($ExpectedInstallerSha256 -and $installerHash -ne $ExpectedInstallerSha256.ToUpperInvariant()) {
         throw "Installer SHA-256 mismatch. Expected $ExpectedInstallerSha256, got $installerHash."
@@ -88,7 +104,7 @@ try {
     } elseif ($signature.Status -ne 'Valid') {
         throw "Installer Authenticode signature is not valid: $($signature.Status)."
     }
-    Set-Stage 'download' 'Succeeded' "Downloaded and validated installer. SHA-256: $installerHash"
+    Set-Stage 'download' 'Succeeded' "$stageMessage SHA-256: $installerHash"
 
     $installProcess = Start-Process -FilePath $installerPath -ArgumentList '/S' -Wait -PassThru
     if ($installProcess.ExitCode -ne 0) {
