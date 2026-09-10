@@ -90,8 +90,12 @@ try {
         $stageMessage = 'Used local offline installer and init script.'
     } else {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
-        Invoke-WebRequest -Uri $initScriptUrl -OutFile $initScriptPath -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
+            Invoke-WebRequest -Uri $initScriptUrl -OutFile $initScriptPath -UseBasicParsing
+        } catch {
+            throw "Online download failed. For a machine without internet access, copy virtio-win-guest-tools.exe and load-virtio-scsi-on-boot.ps1 locally and rerun with -Mode offline -InstallerSourcePath '<path to installer>' -InitScriptSourcePath '<path to init script>'. Original error: $($_.Exception.Message)"
+        }
         $stageMessage = 'Downloaded installer and init script.'
     }
     $installerHash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash
