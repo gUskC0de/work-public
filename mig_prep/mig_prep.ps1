@@ -83,8 +83,12 @@ try {
         if (-not $InstallerSourcePath -or -not $InitScriptSourcePath) {
             throw '-Mode offline requires -InstallerSourcePath and -InitScriptSourcePath.'
         }
-        if (-not (Test-Path $InstallerSourcePath)) { throw "InstallerSourcePath not found: $InstallerSourcePath" }
-        if (-not (Test-Path $InitScriptSourcePath)) { throw "InitScriptSourcePath not found: $InitScriptSourcePath" }
+        if (-not (Test-Path $InstallerSourcePath -PathType Leaf)) {
+            throw "InstallerSourcePath must point to virtio-win-guest-tools.exe, not a directory: $InstallerSourcePath"
+        }
+        if (-not (Test-Path $InitScriptSourcePath -PathType Leaf)) {
+            throw "InitScriptSourcePath must point to load-virtio-scsi-on-boot.ps1, not a directory: $InitScriptSourcePath"
+        }
         Copy-Item -Path $InstallerSourcePath -Destination $installerPath -Force
         Copy-Item -Path $InitScriptSourcePath -Destination $initScriptPath -Force
         $stageMessage = 'Used local offline installer and init script.'
