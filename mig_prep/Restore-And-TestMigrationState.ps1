@@ -72,7 +72,7 @@ $ReportHtmlPath = Join-Path $ReportDirectory 'PostMigrationReport.html'
 $ReportTextPath = Join-Path $ReportDirectory 'PostMigrationReport.txt'
 $SchemaVersion = '1.0'
 # Fixed internal build stamp to verify which copy is deployed on a target machine.
-$CodeRevision = '2026-09-11.1'
+$CodeRevision = '2026-09-11.2'
 $script:LogWriter = $null
 $script:Results = New-Object System.Collections.ArrayList
 $script:Actions = New-Object System.Collections.ArrayList
@@ -184,7 +184,8 @@ function Find-VirtIOAdapters {
     $adapters = @(Get-RelevantAdapters)
     $records = @()
     foreach ($adapter in $adapters) {
-        $driver = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | Where-Object { $_.DeviceID -eq $adapter.PnPDeviceID -or $_.PNPDeviceID -eq $adapter.PnPDeviceID } | Select-Object -First 1)
+        # Win32_PnPSignedDriver exposes DeviceID only; there is no separate PNPDeviceID property.
+        $driver = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | Where-Object { $_.DeviceID -eq $adapter.PnPDeviceID } | Select-Object -First 1)
         $pnpItem = $pnp | Where-Object InstanceId -eq $adapter.PnPDeviceID | Select-Object -First 1
         $driverProvider = if ($driver) { [string]$driver[0].DriverProviderName } else { '' }
         $driverVersion = if ($driver) { [string]$driver[0].DriverVersion } else { '' }
