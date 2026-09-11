@@ -72,7 +72,7 @@ $ReportHtmlPath = Join-Path $ReportDirectory 'PostMigrationReport.html'
 $ReportTextPath = Join-Path $ReportDirectory 'PostMigrationReport.txt'
 $SchemaVersion = '1.0'
 # Fixed internal build stamp to verify which copy is deployed on a target machine.
-$CodeRevision = '2026-09-11.2'
+$CodeRevision = '2026-09-11.3'
 $script:LogWriter = $null
 $script:Results = New-Object System.Collections.ArrayList
 $script:Actions = New-Object System.Collections.ArrayList
@@ -169,7 +169,7 @@ function Get-RelevantAdapters {
 function Get-AdapterRecord {
     param($Adapter)
     $config = Get-NetIPConfiguration -InterfaceIndex $Adapter.ifIndex -ErrorAction SilentlyContinue
-    $ip = @(Get-NetIPAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object AddressState -eq 'Preferred')
+    $ip = @(Get-NetIPAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.AddressState -eq 'Preferred' })
     $dnsClient = Get-DnsClient -InterfaceIndex $Adapter.ifIndex -ErrorAction SilentlyContinue | Select-Object -First 1
     $dns = @(Get-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ServerAddresses)
     $ipInterface = Get-NetIPInterface -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -186,7 +186,8 @@ function Find-VirtIOAdapters {
     foreach ($adapter in $adapters) {
         # Win32_PnPSignedDriver exposes DeviceID only; there is no separate PNPDeviceID property.
         $driver = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | Where-Object { $_.DeviceID -eq $adapter.PnPDeviceID } | Select-Object -First 1)
-        $pnpItem = $pnp | Where-Object InstanceId -eq $adapter.PnPDeviceID | Select-Object -First 1
+        # Bare-property Where-Object throws on a $null pipeline item (possible during PnP re-enumeration); use scriptblock form.
+        $pnpItem = $pnp | Where-Object { $_ -and $_.InstanceId -eq $adapter.PnPDeviceID } | Select-Object -First 1
         $driverProvider = if ($driver) { [string]$driver[0].DriverProviderName } else { '' }
         $driverVersion = if ($driver) { [string]$driver[0].DriverVersion } else { '' }
         $pnpFriendlyName = if ($pnpItem) { [string]$pnpItem.FriendlyName } else { '' }
@@ -197,12 +198,13 @@ function Find-VirtIOAdapters {
     return @($records)
 }
 function Resolve-AdapterMapping {
-    $old = @($script:PreNetwork.activeAdapters)
+    # @(...) around a $null property (e.g. missing/malformed JSON) yields a 1-element array containing $null, not empty.
+    $old = @($script:PreNetwork.activeAdapters | Where-Object { $_ })
     $candidates = @(Find-VirtIOAdapters)
-    $activeAdapters = @($candidates | Where-Object { $_.adapter.status -eq 'Up' })
+    $activeAdapters = @($candidates | Where-Object { $_ -and $_.adapter.status -eq 'Up' })
     if ($old.Count -ne 1) { Add-Result 'Adapter mapping' 'FAIL' "Pre-migration capture contains $($old.Count) active adapters; automatic mapping requires exactly one."; return $null }
-    $virtio = @($candidates | Where-Object isVirtIO)
-    $activeVirtio = @($virtio | Where-Object { $_.adapter.status -eq 'Up' })
+    $virtio = @($candidates | Where-Object { $_ -and $_.isVirtIO })
+    $activeVirtio = @($virtio | Where-Object { $_ -and $_.adapter.status -eq 'Up' })
     if ($activeAdapters.Count -ne 1 -or $activeVirtio.Count -ne 1) {
         $details = @($candidates | ForEach-Object { "Name=$($_.adapter.adapterName), Description=$($_.adapter.interfaceDescription), Status=$($_.adapter.status), VirtIO=$($_.isVirtIO), Provider=$($_.driverProvider), PnP=$($_.pnpFriendlyName)" })
         Add-Result 'Adapter mapping' 'FAIL' "Found $($activeAdapters.Count) active relevant adapter(s) and $($activeVirtio.Count) active VirtIO candidate(s); automatic mapping is ambiguous." $details
@@ -245,7 +247,7 @@ function Restore-AdapterNetwork {
             foreach ($currentDefault in @(Get-NetRoute -InterfaceIndex $target.interfaceIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)) {
                 if ($currentDefault.NextHop -notin $desiredGateways) { Remove-NetRoute -InputObject $currentDefault -Confirm:$false -ErrorAction Stop }
             }
-            $defaultRoute = @($script:PreNetwork.ipv4Routes | Where-Object isDefaultRoute | Sort-Object routeMetric | Select-Object -First 1)
+            $defaultRoute = @($script:PreNetwork.ipv4Routes | Where-Object { $_ -and $_.isDefaultRoute } | Sort-Object routeMetric | Select-Object -First 1)
             $defaultMetric = if ($defaultRoute) { [int]$defaultRoute.routeMetric } else { [int]$source.interfaceMetric }
             foreach ($gateway in $desiredGateways) { if (-not (Get-NetRoute -InterfaceIndex $target.interfaceIndex -DestinationPrefix '0.0.0.0/0' -NextHop $gateway -ErrorAction SilentlyContinue)) { New-NetRoute -InterfaceIndex $target.interfaceIndex -DestinationPrefix '0.0.0.0/0' -NextHop $gateway -RouteMetric $defaultMetric -Confirm:$false | Out-Null } }
             if (@($source.dnsServers).Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $target.interfaceIndex -ServerAddresses @($source.dnsServers) -Confirm:$false }
@@ -296,7 +298,7 @@ function Restore-RollbackAdapter {
     if (-not $PSCmdlet.ShouldProcess($target.interfaceAlias, 'Attempt rollback of pre-change network configuration')) { return $false }
     if ($source.dhcpEnabled) {
         Set-NetIPInterface -InterfaceIndex $target.interfaceIndex -Dhcp Enabled -Confirm:$false
-        Get-NetIPAddress -InterfaceIndex $target.interfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object PrefixOrigin -ne 'WellKnown' | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop
+        Get-NetIPAddress -InterfaceIndex $target.interfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.PrefixOrigin -ne 'WellKnown' } | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop
         Set-DnsClientServerAddress -InterfaceIndex $target.interfaceIndex -ResetServerAddresses -Confirm:$false
     } else {
         Set-NetIPInterface -InterfaceIndex $target.interfaceIndex -Dhcp Disabled -Confirm:$false
@@ -340,7 +342,7 @@ function Get-PostMigrationState {
         systemIdentity = [ordered]@{ computerName = $env:COMPUTERNAME; domainOrWorkgroup = $computer.Domain; partOfDomain = [bool]$computer.PartOfDomain; windowsEdition = $os.Caption; windowsVersion = $os.Version; buildNumber = $os.BuildNumber; timeZone = [TimeZoneInfo]::Local.Id; lastBootTimeUtc = $os.LastBootUpTime.ToUniversalTime().ToString('o') }
         network = $script:CurrentNetwork
         disks = @(Get-Disk -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject][ordered]@{ diskNumber = [int]$_.Number; sizeBytes = [int64]$_.Size; partitionStyle = $_.PartitionStyle.ToString(); operationalStatus = @($_.OperationalStatus | ForEach-Object ToString); healthStatus = $_.HealthStatus.ToString() } })
-        runningServices = @(Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object State -eq 'Running' | ForEach-Object Name)
+        runningServices = @(Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name)
     }
 }
 function Compare-Values {
@@ -379,12 +381,12 @@ function Get-PartitionVolumeStateForComparison {
     $output = @(); foreach ($partition in @(Get-Partition -ErrorAction SilentlyContinue)) { $volume = $partition | Get-Volume -ErrorAction SilentlyContinue; $output += "$($volume.DriveLetter)|$($volume.FileSystemLabel)|$($volume.FileSystem)|$($volume.Path)" }; return @($output)
 }
 function Compare-Services {
-    $current = @(Get-CimInstance Win32_Service | Where-Object State -eq 'Running' | ForEach-Object Name); $before = @($script:PreState.services.runningBeforeMigration); $missing = @($before | Where-Object { $_ -notin $current -and $_ -notmatch 'VMTools|VGAuthService' })
+    $current = @(Get-CimInstance Win32_Service | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name); $before = @($script:PreState.services.runningBeforeMigration); $missing = @($before | Where-Object { $_ -notin $current -and $_ -notmatch 'VMTools|VGAuthService' })
     if ($missing.Count) { Add-Result 'Running services' 'WARNING' "$($missing.Count) services running before migration are stopped now." $missing } else { Add-Result 'Running services' 'PASS' 'Services running before migration are still running, excluding VMware Tools differences.' }
 }
 function Get-RoleFeatureState {
     if (-not (Get-Module -ListAvailable -Name ServerManager)) { return [pscustomobject][ordered]@{ installed = @(); available = $false } }
-    try { Import-Module ServerManager -ErrorAction Stop; return [pscustomobject][ordered]@{ installed = @(Get-WindowsFeature -ErrorAction Stop | Where-Object Installed | ForEach-Object Name); available = $true } }
+    try { Import-Module ServerManager -ErrorAction Stop; return [pscustomobject][ordered]@{ installed = @(Get-WindowsFeature -ErrorAction Stop | Where-Object { $_ -and $_.Installed } | ForEach-Object Name); available = $true } }
     catch { return [pscustomobject][ordered]@{ installed = @(); available = $false } }
 }
 function Get-SmbShareState {
@@ -421,7 +423,7 @@ function Test-FilesystemAndEvents {
     $interesting = @($events | Where-Object { $_.ProviderName -match 'Disk|Ntfs|StorPort|volmgr|Service Control Manager|WHEA-Logger' -or $_.Message -match 'disk|NTFS|storage' } | Select-Object -Unique Id, ProviderName, TimeCreated, Message -First 25); if ($interesting.Count) { Add-Result 'Post-migration event logs' 'WARNING' "$($interesting.Count) relevant event(s) found since migration." (@($interesting | ForEach-Object { "$($_.TimeCreated): ID=$($_.Id), Provider=$($_.ProviderName), $($_.Message -replace '\s+', ' ')" })) } else { Add-Result 'Post-migration event logs' 'PASS' 'No relevant disk/filesystem/storage events found since migration.' }
 }
 function Test-Connectivity {
-    $adapter = @($script:CurrentNetwork.activeAdapters | Where-Object status -eq 'Up' | Select-Object -First 1); $gateways = @($adapter.defaultGateways); $details = @(); $gatewaySuccess = $false; $domainDiscoverySuccess = $true; $portFailures = @()
+    $adapter = @($script:CurrentNetwork.activeAdapters | Where-Object { $_ -and $_.status -eq 'Up' } | Select-Object -First 1); $gateways = @($adapter.defaultGateways); $details = @(); $gatewaySuccess = $false; $domainDiscoverySuccess = $true; $portFailures = @()
     foreach ($gateway in $gateways) { if (Test-Connection -ComputerName $gateway -Count 1 -Quiet -ErrorAction SilentlyContinue) { $gatewaySuccess = $true; $details += "Gateway $gateway responded to ICMP." } else { $details += "Gateway $gateway did not respond to ICMP." } }
     $hostName = if ($DnsTestHost) { $DnsTestHost } else { (Get-CimInstance Win32_ComputerSystem).Domain }; if (-not $hostName) { $hostName = 'example.com' }
     $dnsSuccess = $false; try { Resolve-DnsName $hostName -ErrorAction Stop | Out-Null; $dnsSuccess = $true; $details += "DNS resolution succeeded for $hostName." } catch { $details += "DNS resolution failed for $hostName." }
