@@ -255,7 +255,8 @@ function Test-PendingReboot {
         if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { $reasons += 'Windows Update' }
         $session = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue
         # REG_MULTI_SZ can persist with only blank entries after processing; ignore those.
-        $pendingRenames = @($session.PendingFileRenameOperations | Where-Object { $_ -and $_.Trim() -ne '' })
+        $pendingRenameProperty = if ($session) { $session.PSObject.Properties['PendingFileRenameOperations'] } else { $null }
+        $pendingRenames = if ($pendingRenameProperty) { @($pendingRenameProperty.Value | Where-Object { $_ -and $_.Trim() -ne '' }) } else { @() }
         if ($pendingRenames.Length -gt 0) { $reasons += "Pending file rename operations ($($pendingRenames.Length) entr$(if ($pendingRenames.Length -eq 1) {'y'} else {'ies'}))" }
         if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName') {
             $active = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName').ComputerName
