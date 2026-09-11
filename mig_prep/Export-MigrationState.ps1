@@ -61,7 +61,7 @@ $IpConfigPath = Join-Path $StatePath 'ipconfig-all.txt'
 $ArpPath = Join-Path $StatePath 'arp-a.txt'
 $SchemaVersion = '1.0'
 # Fixed internal build stamp (not the -ScriptVersion parameter) to verify which copy is deployed.
-$CodeRevision = '2026-09-11.2'
+$CodeRevision = '2026-09-11.3'
 $script:LogWriter = $null
 $script:TranscriptStarted = $false
 $script:Results = New-Object System.Collections.ArrayList
@@ -346,7 +346,10 @@ function Get-ScheduledTaskState {
     $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.State -ne 'Disabled' -and $_.TaskPath -notlike '\Microsoft\*' })
     return @($tasks | ForEach-Object {
         $info = Get-ScheduledTaskInfo -TaskName $_.TaskName -TaskPath $_.TaskPath -ErrorAction SilentlyContinue
-        [pscustomobject][ordered]@{ taskName = $_.TaskName; taskPath = $_.TaskPath; state = $_.State.ToString(); author = $_.Author; description = $_.Description; principalUserId = $_.Principal.UserId; runLevel = $_.Principal.RunLevel.ToString(); lastRunTime = if ($info) { $info.LastRunTime.ToString('o') } else { $null }; nextRunTime = if ($info) { $info.NextRunTime.ToString('o') } else { $null }; actions = @($_.Actions | ForEach-Object { [pscustomobject][ordered]@{ execute = $_.Execute; workingDirectory = $_.WorkingDirectory } }) }
+        # Principal, RunLevel, and individual actions can be $null for malformed or COM-handler tasks.
+        $state = if ($_.State) { $_.State.ToString() } else { $null }
+        $runLevel = if ($_.Principal -and $_.Principal.RunLevel) { $_.Principal.RunLevel.ToString() } else { $null }
+        [pscustomobject][ordered]@{ taskName = $_.TaskName; taskPath = $_.TaskPath; state = $state; author = $_.Author; description = $_.Description; principalUserId = if ($_.Principal) { $_.Principal.UserId } else { $null }; runLevel = $runLevel; lastRunTime = if ($info) { $info.LastRunTime.ToString('o') } else { $null }; nextRunTime = if ($info) { $info.NextRunTime.ToString('o') } else { $null }; actions = @($_.Actions | Where-Object { $_ } | ForEach-Object { [pscustomobject][ordered]@{ execute = $_.Execute; workingDirectory = $_.WorkingDirectory } }) }
     })
 }
 
