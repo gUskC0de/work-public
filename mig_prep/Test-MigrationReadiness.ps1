@@ -58,7 +58,7 @@ $LogPath = Join-Path $LogDirectory 'MigrationReadiness.log'
 $JsonPath = Join-Path $RootPath 'MigrationReadiness.json'
 $TextPath = Join-Path $RootPath 'MigrationReadiness.txt'
 $SchemaVersion = '1.0'
-$ScriptVersion = '1.1.0'
+$ScriptVersion = '1.2.0'
 $script:Results = New-Object System.Collections.ArrayList
 $script:LogWriter = $null
 $script:StartedAt = [DateTime]::UtcNow
@@ -253,21 +253,23 @@ function Test-PendingReboot {
         $reasons = @()
         if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { $reasons += 'Component Based Servicing' }
         if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { $reasons += 'Windows Update' }
-        $session = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue
-        # REG_MULTI_SZ can persist with only blank entries after processing; ignore those.
-        $pendingRenameProperty = if ($session) { $session.PSObject.Properties['PendingFileRenameOperations'] } else { $null }
-        $pendingRenameCount = 0
-        if ($pendingRenameProperty) {
-            foreach ($entry in @($pendingRenameProperty.Value)) {
-                if ($entry -and $entry.Trim() -ne '') { $pendingRenameCount++ }
+        # Queried via reg.exe (plain text parsing) instead of Get-ItemProperty to sidestep
+        # PSObject/strict-mode property resolution entirely for this notoriously flaky value.
+        try {
+            $regOutput = & reg.exe query 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager' /v PendingFileRenameOperations 2>&1
+            if ($LASTEXITCODE -eq 0 -and ($regOutput -join "`n") -match 'REG_MULTI_SZ\s+(.+)$') {
+                $rawEntries = $Matches[1] -split '\\0' | Where-Object { $_ -and $_.Trim() -ne '' }
+                $renameCount = ($rawEntries | Measure-Object).Count
+                if ($renameCount -gt 0) { $reasons += "Pending file rename operations ($renameCount entr$(if ($renameCount -eq 1) {'y'} else {'ies'}))" }
             }
-        }
-        if ($pendingRenameCount -gt 0) { $reasons += "Pending file rename operations ($pendingRenameCount entr$(if ($pendingRenameCount -eq 1) {'y'} else {'ies'}))" }
-        if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName') {
-            $active = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName').ComputerName
-            $pending = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName').ComputerName
+        } catch { }
+        try {
+            $activeNameOutput = & reg.exe query 'HKLM\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' /v ComputerName 2>&1
+            $pendingNameOutput = & reg.exe query 'HKLM\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName' /v ComputerName 2>&1
+            if (($activeNameOutput -join "`n") -match 'REG_SZ\s+(\S+)') { $active = $Matches[1] }
+            if (($pendingNameOutput -join "`n") -match 'REG_SZ\s+(\S+)') { $pending = $Matches[1] }
             if ($active -and $pending -and $active -ne $pending) { $reasons += 'Computer rename pending' }
-        }
+        } catch { }
         if ($reasons.Count -gt 0) { Add-CheckResult 'Pending reboot' 'WARNING' 'A reboot is pending.' $reasons | Out-Null }
         else { Add-CheckResult 'Pending reboot' 'PASS' 'No common pending reboot indicators were detected.' | Out-Null }
     }
