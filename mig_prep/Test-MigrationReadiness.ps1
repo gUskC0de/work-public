@@ -179,9 +179,9 @@ function Test-VirtIODrivers {
         $found['viostor'] = @($driverServices | Where-Object Name -eq 'viostor')
         $found['vioscsi'] = @($driverServices | Where-Object Name -eq 'vioscsi')
         foreach ($name in @('NetKVM', 'Balloon', 'vioserial')) { $found[$name] = @($drivers | Where-Object { $_.DeviceName -match [regex]::Escape($name) -or $_.InfName -match [regex]::Escape($name) }) }
-        $storageMissing = @('viostor', 'vioscsi') | Where-Object { $found[$_].Count -eq 0 }
-        $missingNet = $found['NetKVM'].Count -eq 0
-        $details = @($names | ForEach-Object { "$($_): " + $(if ($found[$_].Count -gt 0) { 'present' } else { 'not detected' }) })
+        $storageMissing = @('viostor', 'vioscsi') | Where-Object { @($found[$_]).Count -eq 0 }
+        $missingNet = @($found['NetKVM']).Count -eq 0
+        $details = @($names | ForEach-Object { "$($_): " + $(if (@($found[$_]).Count -gt 0) { 'present' } else { 'not detected' }) })
         $agent = Get-Service -Name 'QEMU-GA', 'qemu-ga' -ErrorAction SilentlyContinue | Select-Object -First 1
         $details += "QEMU Guest Agent service: " + $(if ($agent) { "$($agent.Status)" } else { 'not installed' })
         if ($storageMissing.Count -gt 0) { Add-CheckResult 'VirtIO driver readiness' 'FAIL' "Missing required storage driver(s): $($storageMissing -join ', ')." $details | Out-Null }
@@ -194,8 +194,15 @@ function Test-VMwareTools {
     Invoke-ReadOnlyCheck 'VMware Tools' {
         $service = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
         $app = Get-ItemProperty 'HKLM:\SOFTWARE\VMware, Inc.\VMware Tools', 'HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Tools' -ErrorAction SilentlyContinue | Select-Object -First 1
-        $version = if ($app) { if ($app.Version) { $app.Version } else { $app.ProductVersion } } else { $null }
-        if (-not $service) { Add-CheckResult 'VMware Tools' 'WARNING' 'VMware Tools service was not detected.' | Out-Null }
+        $version = $null
+        if ($app) {
+            $versionProperty = $app.PSObject.Properties['Version']
+            $productVersionProperty = $app.PSObject.Properties['ProductVersion']
+            if ($versionProperty -and $versionProperty.Value) { $version = $versionProperty.Value }
+            elseif ($productVersionProperty -and $productVersionProperty.Value) { $version = $productVersionProperty.Value }
+        }
+        if (-not $service -and -not $app) { Add-CheckResult 'VMware Tools' 'PASS' 'VMware Tools is not installed.' | Out-Null }
+        elseif (-not $service) { Add-CheckResult 'VMware Tools' 'WARNING' "VMware Tools registry data is present, but the service was not detected. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
         elseif ($service.Status -eq 'Running') { Add-CheckResult 'VMware Tools' 'PASS' "Installed and running. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
         else { Add-CheckResult 'VMware Tools' 'WARNING' "Installed but service status is $($service.Status). Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
     }
