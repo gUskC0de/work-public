@@ -179,8 +179,11 @@ function Test-VirtIODrivers {
         $found['viostor'] = @($driverServices | Where-Object Name -eq 'viostor')
         $found['vioscsi'] = @($driverServices | Where-Object Name -eq 'vioscsi')
         foreach ($name in @('NetKVM', 'Balloon', 'vioserial')) { $found[$name] = @($drivers | Where-Object { $_.DeviceName -match [regex]::Escape($name) -or $_.InfName -match [regex]::Escape($name) }) }
-        $storageMissing = @(@('viostor', 'vioscsi') | Where-Object { @($found[$_]).Count -eq 0 })
-        $missingNet = @($found['NetKVM']).Count -eq 0
+        $storageMissing = @()
+        foreach ($storageName in @('viostor', 'vioscsi')) {
+            if (@($found[$storageName]).Length -eq 0) { $storageMissing += $storageName }
+        }
+        $missingNet = @($found['NetKVM']).Length -eq 0
         $details = @()
         foreach ($storageDriver in @('viostor', 'vioscsi')) {
             $service = @($found[$storageDriver]) | Select-Object -First 1
@@ -191,11 +194,12 @@ function Test-VirtIODrivers {
             }
         }
         foreach ($driverName in @('NetKVM', 'Balloon', 'vioserial')) {
-            $details += "{0}: " -f $driverName + $(if (@($found[$driverName]).Count -gt 0) { 'present in PnP Driver Store' } else { 'not detected' })
+            $details += "{0}: " -f $driverName + $(if (@($found[$driverName]).Length -gt 0) { 'present in PnP Driver Store' } else { 'not detected' })
         }
         $agent = Get-Service -Name 'QEMU-GA', 'qemu-ga' -ErrorAction SilentlyContinue | Select-Object -First 1
         $details += "QEMU Guest Agent service: " + $(if ($agent) { "$($agent.Status)" } else { 'not installed' })
-        if ($storageMissing.Count -gt 0) { Add-CheckResult 'VirtIO driver readiness' 'FAIL' "Missing required storage driver(s): $($storageMissing -join ', ')." $details | Out-Null }
+        $missingStorageCount = @($storageMissing).Length
+        if ($missingStorageCount -gt 0) { Add-CheckResult 'VirtIO driver readiness' 'FAIL' "Missing required storage driver(s): $($storageMissing -join ', ')." $details | Out-Null }
         elseif ($missingNet) { Add-CheckResult 'VirtIO driver readiness' 'WARNING' 'VirtIO storage drivers are present, but NetKVM was not detected.' $details | Out-Null }
         else { Add-CheckResult 'VirtIO driver readiness' 'PASS' 'VirtIO storage and NetKVM drivers were detected.' $details | Out-Null }
     }
