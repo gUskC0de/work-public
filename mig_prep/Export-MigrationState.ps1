@@ -236,18 +236,19 @@ function Get-StructuredRoutes {
     $routes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop)
     return @($routes | ForEach-Object {
         $adapter = Get-NetAdapter -InterfaceIndex $_.ifIndex -ErrorAction SilentlyContinue
+        $protocol = if ($_.PSObject.Properties['RouteProtocol']) { [string]$_.RouteProtocol } else { 'Unknown' }
         [pscustomobject][ordered]@{
             destinationPrefix = $_.DestinationPrefix
             nextHop = $_.NextHop
             interfaceIndex = [int]$_.ifIndex
             interfaceAlias = if ($adapter) { $adapter.Name } else { $null }
             routeMetric = [int]$_.RouteMetric
-            protocol = $_.RouteProtocol.ToString()
+            protocol = $protocol
             store = if ($_.PSObject.Properties['Store']) { [string]$_.Store } elseif ($_.PSObject.Properties['PolicyStore']) { [string]$_.PolicyStore } else { $null }
             publish = if ($_.PSObject.Properties['Publish'] -and $null -ne $_.Publish) { $_.Publish.ToString() } else { $null }
             isDefaultRoute = $_.DestinationPrefix -eq '0.0.0.0/0'
-            isConnectedRoute = $_.RouteProtocol.ToString() -eq 'Local'
-            isPersistentOrStatic = $_.RouteProtocol.ToString() -match 'NetMgmt|Manual|Static'
+            isConnectedRoute = $protocol -eq 'Local'
+            isPersistentOrStatic = $protocol -match 'NetMgmt|Manual|Static'
         }
     })
 }
