@@ -61,7 +61,7 @@ $IpConfigPath = Join-Path $StatePath 'ipconfig-all.txt'
 $ArpPath = Join-Path $StatePath 'arp-a.txt'
 $SchemaVersion = '1.0'
 # Fixed internal build stamp (not the -ScriptVersion parameter) to verify which copy is deployed.
-$CodeRevision = '2026-09-11.3'
+$CodeRevision = '2026-09-11.4'
 $script:LogWriter = $null
 $script:TranscriptStarted = $false
 $script:Results = New-Object System.Collections.ArrayList
@@ -346,10 +346,12 @@ function Get-ScheduledTaskState {
     $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.State -ne 'Disabled' -and $_.TaskPath -notlike '\Microsoft\*' })
     return @($tasks | ForEach-Object {
         $info = Get-ScheduledTaskInfo -TaskName $_.TaskName -TaskPath $_.TaskPath -ErrorAction SilentlyContinue
-        # Principal, RunLevel, and individual actions can be $null for malformed or COM-handler tasks.
+        # Principal, RunLevel, actions, and run-time fields can individually be $null (no history, malformed, or COM-handler tasks).
         $state = if ($_.State) { $_.State.ToString() } else { $null }
         $runLevel = if ($_.Principal -and $_.Principal.RunLevel) { $_.Principal.RunLevel.ToString() } else { $null }
-        [pscustomobject][ordered]@{ taskName = $_.TaskName; taskPath = $_.TaskPath; state = $state; author = $_.Author; description = $_.Description; principalUserId = if ($_.Principal) { $_.Principal.UserId } else { $null }; runLevel = $runLevel; lastRunTime = if ($info) { $info.LastRunTime.ToString('o') } else { $null }; nextRunTime = if ($info) { $info.NextRunTime.ToString('o') } else { $null }; actions = @($_.Actions | Where-Object { $_ } | ForEach-Object { [pscustomobject][ordered]@{ execute = $_.Execute; workingDirectory = $_.WorkingDirectory } }) }
+        $lastRunTime = if ($info -and $info.LastRunTime) { $info.LastRunTime.ToString('o') } else { $null }
+        $nextRunTime = if ($info -and $info.NextRunTime) { $info.NextRunTime.ToString('o') } else { $null }
+        [pscustomobject][ordered]@{ taskName = $_.TaskName; taskPath = $_.TaskPath; state = $state; author = $_.Author; description = $_.Description; principalUserId = if ($_.Principal) { $_.Principal.UserId } else { $null }; runLevel = $runLevel; lastRunTime = $lastRunTime; nextRunTime = $nextRunTime; actions = @($_.Actions | Where-Object { $_ } | ForEach-Object { [pscustomobject][ordered]@{ execute = $_.Execute; workingDirectory = $_.WorkingDirectory } }) }
     })
 }
 
