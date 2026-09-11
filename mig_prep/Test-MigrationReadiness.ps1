@@ -179,7 +179,7 @@ function Test-VirtIODrivers {
         $found['viostor'] = @($driverServices | Where-Object Name -eq 'viostor')
         $found['vioscsi'] = @($driverServices | Where-Object Name -eq 'vioscsi')
         foreach ($name in @('NetKVM', 'Balloon', 'vioserial')) { $found[$name] = @($drivers | Where-Object { $_.DeviceName -match [regex]::Escape($name) -or $_.InfName -match [regex]::Escape($name) }) }
-        $storageMissing = @('viostor', 'vioscsi') | Where-Object { @($found[$_]).Count -eq 0 }
+        $storageMissing = @(@('viostor', 'vioscsi') | Where-Object { @($found[$_]).Count -eq 0 })
         $missingNet = @($found['NetKVM']).Count -eq 0
         $details = @()
         foreach ($storageDriver in @('viostor', 'vioscsi')) {
