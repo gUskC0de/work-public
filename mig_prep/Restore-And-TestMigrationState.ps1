@@ -71,6 +71,8 @@ $ReportJsonPath = Join-Path $ReportDirectory 'PostMigrationReport.json'
 $ReportHtmlPath = Join-Path $ReportDirectory 'PostMigrationReport.html'
 $ReportTextPath = Join-Path $ReportDirectory 'PostMigrationReport.txt'
 $SchemaVersion = '1.0'
+# Fixed internal build stamp to verify which copy is deployed on a target machine.
+$CodeRevision = '2026-09-11.1'
 $script:LogWriter = $null
 $script:Results = New-Object System.Collections.ArrayList
 $script:Actions = New-Object System.Collections.ArrayList
@@ -302,11 +304,13 @@ function Restore-RollbackAdapter {
         if (@($source.dnsServers).Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $target.interfaceIndex -ServerAddresses @($source.dnsServers) -Confirm:$false }
     }
     Set-NetIPInterface -InterfaceIndex $target.interfaceIndex -InterfaceMetric $source.interfaceMetric -Confirm:$false
-    $savedRoutes = @($rollback.routes | Where-Object { $_.ifIndex -eq $target.interfaceIndex -and $_.RouteProtocol.ToString() -ne 'Local' })
+    # RouteProtocol is not guaranteed on every route object; treat missing as non-local.
+    $savedRoutes = @($rollback.routes | Where-Object { $_.ifIndex -eq $target.interfaceIndex -and (-not $_.PSObject.Properties['RouteProtocol'] -or [string]$_.RouteProtocol -ne 'Local') })
     $savedRouteKeys = @($savedRoutes | ForEach-Object { '{0}|{1}' -f $_.DestinationPrefix, $_.NextHop })
     foreach ($currentRoute in @(Get-NetRoute -InterfaceIndex $target.interfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue)) {
         $routeKey = '{0}|{1}' -f $currentRoute.DestinationPrefix, $currentRoute.NextHop
-        if ($currentRoute.RouteProtocol.ToString() -ne 'Local' -and $routeKey -notin $savedRouteKeys) { Remove-NetRoute -InputObject $currentRoute -Confirm:$false -ErrorAction Stop }
+        $currentProtocol = if ($currentRoute.PSObject.Properties['RouteProtocol']) { [string]$currentRoute.RouteProtocol } else { 'Unknown' }
+        if ($currentProtocol -ne 'Local' -and $routeKey -notin $savedRouteKeys) { Remove-NetRoute -InputObject $currentRoute -Confirm:$false -ErrorAction Stop }
     }
     foreach ($savedRoute in $savedRoutes) {
         $routeKey = '{0}|{1}' -f $savedRoute.DestinationPrefix, $savedRoute.NextHop
@@ -318,7 +322,11 @@ function Restore-RollbackAdapter {
 }
 function Get-CurrentNetworkState {
     $adapters = @(Get-RelevantAdapters | ForEach-Object { Get-AdapterRecord $_ })
-    $routes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $adapter = Get-NetAdapter -InterfaceIndex $_.ifIndex -ErrorAction SilentlyContinue; [pscustomobject][ordered]@{ destinationPrefix = $_.DestinationPrefix; nextHop = $_.NextHop; interfaceIndex = [int]$_.ifIndex; interfaceAlias = if ($adapter) { $adapter.Name } else { $null }; routeMetric = [int]$_.RouteMetric; protocol = $_.RouteProtocol.ToString(); isDefaultRoute = $_.DestinationPrefix -eq '0.0.0.0/0'; isConnectedRoute = $_.RouteProtocol.ToString() -eq 'Local' } })
+    $routes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object {
+        $adapter = Get-NetAdapter -InterfaceIndex $_.ifIndex -ErrorAction SilentlyContinue
+        $protocol = if ($_.PSObject.Properties['RouteProtocol']) { [string]$_.RouteProtocol } else { 'Unknown' }
+        [pscustomobject][ordered]@{ destinationPrefix = $_.DestinationPrefix; nextHop = $_.NextHop; interfaceIndex = [int]$_.ifIndex; interfaceAlias = if ($adapter) { $adapter.Name } else { $null }; routeMetric = [int]$_.RouteMetric; protocol = $protocol; isDefaultRoute = $_.DestinationPrefix -eq '0.0.0.0/0'; isConnectedRoute = $protocol -eq 'Local' }
+    })
     [ordered]@{ schemaVersion = $SchemaVersion; captureType = 'PostMigrationState'; capturedAtUtc = [DateTime]::UtcNow.ToString('o'); activeAdapters = @($adapters); ipv4Routes = @($routes) }
 }
 function Get-PostMigrationState {
@@ -384,7 +392,12 @@ function Get-SmbShareState {
 }
 function Get-ScheduledTaskState {
     if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) { return @() }
-    return @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.State -ne 'Disabled' -and $_.TaskPath -notlike '\Microsoft\*' } | ForEach-Object { [pscustomobject][ordered]@{ taskName = $_.TaskName; taskPath = $_.TaskPath; state = $_.State.ToString(); principalUserId = $_.Principal.UserId; runLevel = $_.Principal.RunLevel.ToString(); actions = @($_.Actions | ForEach-Object { [pscustomobject][ordered]@{ execute = $_.Execute; workingDirectory = $_.WorkingDirectory } }) } })
+    return @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.State -ne 'Disabled' -and $_.TaskPath -notlike '\Microsoft\*' } | ForEach-Object {
+        # Principal, RunLevel, and individual actions can be $null for malformed or COM-handler tasks.
+        $state = if ($_.State) { $_.State.ToString() } else { $null }
+        $runLevel = if ($_.Principal -and $_.Principal.RunLevel) { $_.Principal.RunLevel.ToString() } else { $null }
+        [pscustomobject][ordered]@{ taskName = $_.TaskName; taskPath = $_.TaskPath; state = $state; principalUserId = if ($_.Principal) { $_.Principal.UserId } else { $null }; runLevel = $runLevel; actions = @($_.Actions | Where-Object { $_ } | ForEach-Object { [pscustomobject][ordered]@{ execute = $_.Execute; workingDirectory = $_.WorkingDirectory } }) }
+    })
 }
 function Get-ListeningPortState {
     if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { return @() }
@@ -473,7 +486,7 @@ try {
     New-Item -ItemType Directory -Path $StateDirectory, $ReportDirectory, $LogDirectory -Force | Out-Null
     if (Test-Path $LogPath) { Move-Item $LogPath (Join-Path $LogDirectory ('PostMigrationValidation_{0}.log' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))) -Force }
     $script:LogWriter = New-Object System.IO.StreamWriter($LogPath, $false, [Text.Encoding]::UTF8)
-    Write-Log "Starting post-migration validation in $Mode mode." ([ConsoleColor]::Cyan)
+    Write-Log "Starting post-migration validation in $Mode mode (code revision $CodeRevision)." ([ConsoleColor]::Cyan)
     if (-not (Test-Administrator)) { $null = Write-Reports; exit 10 }
     if (-not (Test-InputData)) { $null = Write-Reports; exit 20 }
     if (-not (Test-CaptureCompleteness)) { $null = Write-Reports; exit 20 }
