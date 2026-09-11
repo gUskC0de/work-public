@@ -269,7 +269,9 @@ function Test-ServiceHealth {
         $services = @(Get-CimInstance Win32_Service -Filter "StartMode='Auto' AND State<>'Running'" -ErrorAction Stop)
         $stopped = @($services | Where-Object {
             $delayedPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$($_.Name)"
-            $delayed = (Get-ItemProperty -Path $delayedPath -Name DelayedAutostart -ErrorAction SilentlyContinue).DelayedAutostart
+            $delayedProperties = Get-ItemProperty -Path $delayedPath -ErrorAction SilentlyContinue
+            $delayedProperty = if ($delayedProperties) { $delayedProperties.PSObject.Properties['DelayedAutostart'] } else { $null }
+            $delayed = if ($delayedProperty) { $delayedProperty.Value } else { 0 }
             [int]$delayed -ne 1
         })
         $details = @($stopped | ForEach-Object { "$($_.Name): state=$($_.State), start=$($_.StartMode), display='$($_.DisplayName)'" })
