@@ -269,9 +269,8 @@ function Test-ServiceHealth {
         $services = @(Get-CimInstance Win32_Service -Filter "StartMode='Auto' AND State<>'Running'" -ErrorAction Stop)
         $stopped = @($services | Where-Object {
             $delayedPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$($_.Name)"
-            $delayedProperties = Get-ItemProperty -Path $delayedPath -ErrorAction SilentlyContinue
-            $delayedProperty = if ($delayedProperties) { $delayedProperties.PSObject.Properties['DelayedAutostart'] } else { $null }
-            $delayed = if ($delayedProperty) { $delayedProperty.Value } else { 0 }
+            $delayedValues = @(Get-ItemPropertyValue -Path $delayedPath -Name 'DelayedAutostart' -ErrorAction SilentlyContinue)
+            $delayed = if ($delayedValues.Length -gt 0) { $delayedValues[0] } else { 0 }
             [int]$delayed -ne 1
         })
         $details = @($stopped | ForEach-Object { "$($_.Name): state=$($_.State), start=$($_.StartMode), display='$($_.DisplayName)'" })
@@ -289,16 +288,13 @@ function Test-DiskHealth {
         $details = @($disks | ForEach-Object { "Disk $($_.Number): status=$($_.OperationalStatus -join ','), health=$($_.HealthStatus), style=$($_.PartitionStyle), sizeGB=$([math]::Round($_.Size / 1GB, 2))" })
         $volumes = @(Get-Volume -ErrorAction Stop)
         $unhealthyVolumes = @($volumes | Where-Object { $_.HealthStatus -eq 'Unhealthy' -or $_.HealthStatus -eq 'Failed' })
-        $bitLockerUnavailable = 0
         foreach ($volume in $volumes) {
-            $bitLockerStatus = 'Unavailable'
+            $bitLockerStatus = 'Not available'
             if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
                 try {
                     $bitLocker = Get-BitLockerVolume -MountPoint "$($volume.DriveLetter):" -ErrorAction Stop
                     $bitLockerStatus = "$($bitLocker.VolumeStatus), protection=$($bitLocker.ProtectionStatus), encryption=$($bitLocker.EncryptionPercentage)%"
-                } catch { $bitLockerStatus = "Unavailable: $($_.Exception.Message)"; $bitLockerUnavailable++ }
-            } else {
-                $bitLockerUnavailable++
+                } catch { $bitLockerStatus = "Not available: $($_.Exception.Message)" }
             }
             $details += "Volume $($volume.DriveLetter): label='$($volume.FileSystemLabel)', fs=$($volume.FileSystem), health=$($volume.HealthStatus), sizeGB=$([math]::Round($volume.Size / 1GB, 2)), freeGB=$([math]::Round($volume.SizeRemaining / 1GB, 2)), BitLocker=$bitLockerStatus"
         }
@@ -310,7 +306,6 @@ function Test-DiskHealth {
         elseif (-not $system) { Add-CheckResult 'Disk and volume health' 'FAIL' 'The system volume could not be identified or is inaccessible.' $details | Out-Null }
         elseif (($system.SizeRemaining / 1GB) -lt $CriticalSystemFreeSpaceGB) { Add-CheckResult 'Disk and volume health' 'FAIL' "System volume has less than $CriticalSystemFreeSpaceGB GB free." $details | Out-Null }
         elseif ($system -and ($system.SizeRemaining / 1GB) -lt $WarningSystemFreeSpaceGB) { Add-CheckResult 'Disk and volume health' 'WARNING' "System volume has less than $WarningSystemFreeSpaceGB GB free." $details | Out-Null }
-        elseif ($bitLockerUnavailable -gt 0) { Add-CheckResult 'Disk and volume health' 'WARNING' "BitLocker status was unavailable for $bitLockerUnavailable volume(s)." $details | Out-Null }
         else { Add-CheckResult 'Disk and volume health' 'PASS' 'Disks and volumes appear operational; volume inventory captured.' $details | Out-Null }
     }
 }
@@ -362,8 +357,11 @@ function Test-VssHealth {
 function Test-WindowsUpdate {
     Invoke-ReadOnlyCheck 'Windows Update status' {
         $last = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UpdatePolicy\Settings' -ErrorAction SilentlyContinue
-        $details = @("LastSuccessTime: $($last.LastSuccessTime)", "RebootRequired: $([bool](Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'))")
-        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { Add-CheckResult 'Windows Update status' 'WARNING' 'Windows Update reports a pending reboot.' $details | Out-Null }
+        $lastSuccessProperty = if ($last) { $last.PSObject.Properties['LastSuccessTime'] } else { $null }
+        $lastSuccess = if ($lastSuccessProperty) { $lastSuccessProperty.Value } else { 'Not available' }
+        $rebootRequired = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+        $details = @("LastSuccessTime: $lastSuccess", "RebootRequired: $([bool]$rebootRequired)")
+        if ($rebootRequired) { Add-CheckResult 'Windows Update status' 'WARNING' 'Windows Update reports a pending reboot.' $details | Out-Null }
         else { Add-CheckResult 'Windows Update status' 'PASS' 'No Windows Update pending reboot was detected; no updates were installed.' $details | Out-Null }
     }
 }
