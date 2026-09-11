@@ -172,7 +172,7 @@ function Test-NetworkAdapters {
 function Test-VirtIODrivers {
     Invoke-ReadOnlyCheck 'VirtIO driver readiness' {
         $names = @('viostor', 'vioscsi', 'NetKVM', 'Balloon', 'vioserial')
-        $driverServices = @(Get-CimInstance Win32_SystemDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -in @('viostor', 'vioscsi') })
+        $driverServices = @(Get-CimInstance Win32_SystemDriver -ErrorAction Stop | Where-Object { $_.Name -in @('viostor', 'vioscsi') })
         $drivers = @()
         try { $drivers = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop | Where-Object { $_.DriverProviderName -match 'Red Hat|VirtIO' -or $_.DeviceName -match 'VirtIO|NetKVM|Balloon' }) } catch { $drivers = @() }
         $found = @{}
@@ -181,7 +181,18 @@ function Test-VirtIODrivers {
         foreach ($name in @('NetKVM', 'Balloon', 'vioserial')) { $found[$name] = @($drivers | Where-Object { $_.DeviceName -match [regex]::Escape($name) -or $_.InfName -match [regex]::Escape($name) }) }
         $storageMissing = @('viostor', 'vioscsi') | Where-Object { @($found[$_]).Count -eq 0 }
         $missingNet = @($found['NetKVM']).Count -eq 0
-        $details = @($names | ForEach-Object { "$($_): " + $(if (@($found[$_]).Count -gt 0) { 'present' } else { 'not detected' }) })
+        $details = @()
+        foreach ($storageDriver in @('viostor', 'vioscsi')) {
+            $service = @($found[$storageDriver]) | Select-Object -First 1
+            if ($service) {
+                $details += "{0}: installed; State={1}; StartMode={2}; PathName={3}" -f $service.Name, $service.State, $service.StartMode, $service.PathName
+            } else {
+                $details += "{0}: not detected in Win32_SystemDriver" -f $storageDriver
+            }
+        }
+        foreach ($driverName in @('NetKVM', 'Balloon', 'vioserial')) {
+            $details += "{0}: " -f $driverName + $(if (@($found[$driverName]).Count -gt 0) { 'present in PnP Driver Store' } else { 'not detected' })
+        }
         $agent = Get-Service -Name 'QEMU-GA', 'qemu-ga' -ErrorAction SilentlyContinue | Select-Object -First 1
         $details += "QEMU Guest Agent service: " + $(if ($agent) { "$($agent.Status)" } else { 'not installed' })
         if ($storageMissing.Count -gt 0) { Add-CheckResult 'VirtIO driver readiness' 'FAIL' "Missing required storage driver(s): $($storageMissing -join ', ')." $details | Out-Null }
