@@ -148,6 +148,19 @@ function Test-ComputerIdentity {
     if ($Force) { Add-Result 'Computer identity' 'WARNING' "Captured computer '$oldName' differs from current '$env:COMPUTERNAME'; continuing because -Force was supplied."; return $true }
     Add-Result 'Computer identity' 'FAIL' "Captured computer '$oldName' differs from current '$env:COMPUTERNAME'; automatic restoration is blocked. Use -Force only after confirming the target."; return $false
 }
+function Test-CaptureCompleteness {
+    $captureStatus = $script:PreState.captureStatus
+    if (-not $captureStatus) { Add-Result 'Capture completeness' 'NOT_CHECKED' 'The pre-migration capture does not report a captureStatus (older capture format).'; return $true }
+    if ($captureStatus.complete) { Add-Result 'Capture completeness' 'PASS' 'The pre-migration capture completed without warnings.'; return $true }
+    $captureWarnings = @($captureStatus.warnings)
+    $networkAffected = @($captureWarnings | Where-Object { $_ -match 'Network configuration|Raw network outputs|Active network adapter' })
+    if (@($networkAffected).Count -gt 0 -and ($Mode -eq 'ApplyNetwork' -or $Mode -eq 'Full')) {
+        Add-Result 'Capture completeness' 'FAIL' 'The pre-migration capture reported network-related warnings; automatic network restoration is blocked.' $captureWarnings
+        return $false
+    }
+    Add-Result 'Capture completeness' 'WARNING' 'The pre-migration capture completed with non-critical warnings; review before relying on this baseline.' $captureWarnings
+    return $true
+}
 function Get-RelevantAdapters {
     @(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.Name -notmatch 'Loopback|ISATAP|Teredo|Tunnel' -and $_.InterfaceDescription -notmatch 'Loopback|ISATAP|Teredo|Tunnel' })
 }
@@ -463,6 +476,7 @@ try {
     Write-Log "Starting post-migration validation in $Mode mode." ([ConsoleColor]::Cyan)
     if (-not (Test-Administrator)) { $null = Write-Reports; exit 10 }
     if (-not (Test-InputData)) { $null = Write-Reports; exit 20 }
+    if (-not (Test-CaptureCompleteness)) { $null = Write-Reports; exit 20 }
     if (-not (Test-ComputerIdentity)) { $null = Write-Reports; exit 20 }
     $mapping = Resolve-AdapterMapping
     if (-not $mapping) { $null = Write-Reports; exit 30 }
