@@ -58,6 +58,7 @@ $LogPath = Join-Path $LogDirectory 'MigrationReadiness.log'
 $JsonPath = Join-Path $RootPath 'MigrationReadiness.json'
 $TextPath = Join-Path $RootPath 'MigrationReadiness.txt'
 $SchemaVersion = '1.0'
+$ScriptVersion = '1.1.0'
 $script:Results = New-Object System.Collections.ArrayList
 $script:LogWriter = $null
 $script:StartedAt = [DateTime]::UtcNow
@@ -268,9 +269,19 @@ function Test-ServiceHealth {
     Invoke-ReadOnlyCheck 'Windows service health' {
         $services = @(Get-CimInstance Win32_Service -Filter "StartMode='Auto' AND State<>'Running'" -ErrorAction Stop)
         $stopped = @($services | Where-Object {
-            $delayedPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$($_.Name)"
-            $serviceKey = Get-Item -LiteralPath $delayedPath -ErrorAction SilentlyContinue
-            $delayed = if ($serviceKey) { $serviceKey.GetValue('DelayedAutostart', 0) } else { 0 }
+            $serviceKey = $null
+            $registry = $null
+            try {
+                $registry = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+                    [Microsoft.Win32.RegistryHive]::LocalMachine,
+                    [Microsoft.Win32.RegistryView]::Default
+                )
+                $serviceKey = $registry.OpenSubKey("SYSTEM\CurrentControlSet\Services\$($_.Name)", $false)
+                $delayed = if ($serviceKey) { $serviceKey.GetValue('DelayedAutostart', 0, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } else { 0 }
+            } finally {
+                if ($serviceKey) { $serviceKey.Dispose() }
+                if ($registry) { $registry.Dispose() }
+            }
             [int]$delayed -ne 1
         })
         $details = @($stopped | ForEach-Object { "$($_.Name): state=$($_.State), start=$($_.StartMode), display='$($_.DisplayName)'" })
@@ -405,7 +416,7 @@ try {
     New-Item -ItemType Directory -Path $RootPath -Force | Out-Null
     if (Test-Path $LogPath) { Move-Item -Path $LogPath -Destination (Join-Path $LogDirectory ('MigrationReadiness_{0}.log' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))) -Force }
     $script:LogWriter = New-Object System.IO.StreamWriter($LogPath, $false, [Text.Encoding]::UTF8)
-    Write-Log 'Starting migration readiness checks.' ([ConsoleColor]::Cyan)
+    Write-Log "Starting migration readiness checks. Script version $ScriptVersion." ([ConsoleColor]::Cyan)
     if (-not (Test-Administrator)) { Write-Reports | Out-Null; exit 2 }
     Test-MountedMedia
     Test-NetworkAdapters
