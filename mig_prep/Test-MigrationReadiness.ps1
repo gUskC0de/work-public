@@ -173,24 +173,42 @@ function Test-VirtIODrivers {
     Invoke-ReadOnlyCheck 'VirtIO driver readiness' {
         $names = @('viostor', 'vioscsi', 'NetKVM', 'Balloon', 'vioserial')
         $driverServices = @(Get-CimInstance Win32_SystemDriver -ErrorAction Stop | Where-Object { $_.Name -in @('viostor', 'vioscsi') })
+        $driverStoreText = @()
+        if (Get-Command pnputil.exe -ErrorAction SilentlyContinue) {
+            $driverStoreText = @(& pnputil.exe /enum-drivers 2>&1)
+        }
+        $driverStoreTextJoined = $driverStoreText -join "`n"
+        $driverStoreInstalled = @{}
+        $driverStoreEvidence = @{}
+        foreach ($driverInf in @('viostor.inf', 'vioscsi.inf')) {
+            # pnputil output is localized and its formatting varies by Windows version.
+            # Matching the INF name anywhere in /enum-drivers output is intentional.
+            $driverName = [System.IO.Path]::GetFileNameWithoutExtension($driverInf)
+            $infMatch = $driverStoreTextJoined -match "(?i)(^|[^a-z0-9])$([regex]::Escape($driverInf))([^a-z0-9]|$)"
+            $sysPath = Join-Path $env:windir "System32\drivers\$driverName.sys"
+            $sysMatch = Test-Path $sysPath -PathType Leaf
+            $driverStoreInstalled[$driverInf] = $infMatch -or $sysMatch
+            $evidence = @()
+            if ($infMatch) { $evidence += 'pnputil Driver Store enumeration' }
+            if ($sysMatch) { $evidence += $sysPath }
+            $driverStoreEvidence[$driverInf] = @($evidence)
+        }
         $drivers = @()
         try { $drivers = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop | Where-Object { $_.DriverProviderName -match 'Red Hat|VirtIO' -or $_.DeviceName -match 'VirtIO|NetKVM|Balloon' }) } catch { $drivers = @() }
         $found = @{}
         $found['viostor'] = @($driverServices | Where-Object Name -eq 'viostor')
         $found['vioscsi'] = @($driverServices | Where-Object Name -eq 'vioscsi')
         foreach ($name in @('NetKVM', 'Balloon', 'vioserial')) { $found[$name] = @($drivers | Where-Object { $_.DeviceName -match [regex]::Escape($name) -or $_.InfName -match [regex]::Escape($name) }) }
-        $storageMissing = @()
-        foreach ($storageName in @('viostor', 'vioscsi')) {
-            if (@($found[$storageName]).Length -eq 0) { $storageMissing += $storageName }
-        }
         $missingNet = @($found['NetKVM']).Length -eq 0
         $details = @()
         foreach ($storageDriver in @('viostor', 'vioscsi')) {
             $service = @($found[$storageDriver]) | Select-Object -First 1
             if ($service) {
                 $details += "{0}: installed; State={1}; StartMode={2}; PathName={3}" -f $service.Name, $service.State, $service.StartMode, $service.PathName
+            } elseif ($driverStoreInstalled["$storageDriver.inf"]) {
+                $details += "{0}: installed; no active device service is registered yet; evidence={1}" -f $storageDriver, ($driverStoreEvidence["$storageDriver.inf"] -join ', ')
             } else {
-                $details += "{0}: not detected in Win32_SystemDriver" -f $storageDriver
+                $details += "{0}: not detected in Driver Store or Win32_SystemDriver" -f $storageDriver
             }
         }
         foreach ($driverName in @('NetKVM', 'Balloon', 'vioserial')) {
@@ -198,6 +216,12 @@ function Test-VirtIODrivers {
         }
         $agent = Get-Service -Name 'QEMU-GA', 'qemu-ga' -ErrorAction SilentlyContinue | Select-Object -First 1
         $details += "QEMU Guest Agent service: " + $(if ($agent) { "$($agent.Status)" } else { 'not installed' })
+        $storageMissing = @()
+        foreach ($storageName in @('viostor', 'vioscsi')) {
+            if ((@($found[$storageName]).Length -eq 0) -and (-not $driverStoreInstalled["$storageName.inf"])) {
+                $storageMissing += $storageName
+            }
+        }
         $missingStorageCount = @($storageMissing).Length
         if ($missingStorageCount -gt 0) { Add-CheckResult 'VirtIO driver readiness' 'FAIL' "Missing required storage driver(s): $($storageMissing -join ', ')." $details | Out-Null }
         elseif ($missingNet) { Add-CheckResult 'VirtIO driver readiness' 'WARNING' 'VirtIO storage drivers are present, but NetKVM was not detected.' $details | Out-Null }
@@ -217,9 +241,9 @@ function Test-VMwareTools {
             elseif ($productVersionProperty -and $productVersionProperty.Value) { $version = $productVersionProperty.Value }
         }
         if (-not $service -and -not $app) { Add-CheckResult 'VMware Tools' 'PASS' 'VMware Tools is not installed.' | Out-Null }
-        elseif (-not $service) { Add-CheckResult 'VMware Tools' 'WARNING' "VMware Tools registry data is present, but the service was not detected. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
-        elseif ($service.Status -eq 'Running') { Add-CheckResult 'VMware Tools' 'PASS' "Installed and running. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
-        else { Add-CheckResult 'VMware Tools' 'WARNING' "Installed but service status is $($service.Status). Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
+        elseif (-not $service) { Add-CheckResult 'VMware Tools' 'FAIL' "VMware Tools registry data is present, but the service was not detected. Remove VMware Tools before migration. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
+        elseif ($service.Status -eq 'Running') { Add-CheckResult 'VMware Tools' 'FAIL' "VMware Tools is still installed and running. Remove VMware Tools before migration. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
+        else { Add-CheckResult 'VMware Tools' 'FAIL' "VMware Tools is still installed; service status is $($service.Status). Remove VMware Tools before migration. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
     }
 }
 
