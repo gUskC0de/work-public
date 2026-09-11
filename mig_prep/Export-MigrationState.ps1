@@ -60,6 +60,8 @@ $RoutePath = Join-Path $StatePath 'route-print-4.txt'
 $IpConfigPath = Join-Path $StatePath 'ipconfig-all.txt'
 $ArpPath = Join-Path $StatePath 'arp-a.txt'
 $SchemaVersion = '1.0'
+# Fixed internal build stamp (not the -ScriptVersion parameter) to verify which copy is deployed.
+$CodeRevision = '2026-09-11.2'
 $script:LogWriter = $null
 $script:TranscriptStarted = $false
 $script:Results = New-Object System.Collections.ArrayList
@@ -396,7 +398,7 @@ try {
     if (Test-Path $LogPath) { Move-Item -Path $LogPath -Destination (Join-Path $LogDirectory ('ExportMigrationState_{0}.log' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))) -Force }
     $script:LogWriter = New-Object System.IO.StreamWriter($LogPath, $false, [Text.Encoding]::UTF8)
     try { Start-Transcript -Path $TranscriptPath -Append -ErrorAction Stop | Out-Null; $script:TranscriptStarted = $true } catch { Write-Log "Transcript unavailable: $($_.Exception.Message)" ([ConsoleColor]::Yellow) }
-    Write-Log "Starting pre-migration state capture version $ScriptVersion." ([ConsoleColor]::Cyan)
+    Write-Log "Starting pre-migration state capture version $ScriptVersion (code revision $CodeRevision)." ([ConsoleColor]::Cyan)
 
     if (-not (Test-Administrator)) { Write-Log 'Capture blocked: not elevated.' ([ConsoleColor]::Red); exit 10 }
     if (-not (Test-MountedMediaSafety)) { Write-Log 'Capture blocked: mounted media detected or safety check failed.' ([ConsoleColor]::Red); exit 20 }
