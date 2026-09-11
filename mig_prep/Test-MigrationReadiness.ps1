@@ -256,8 +256,13 @@ function Test-PendingReboot {
         $session = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue
         # REG_MULTI_SZ can persist with only blank entries after processing; ignore those.
         $pendingRenameProperty = if ($session) { $session.PSObject.Properties['PendingFileRenameOperations'] } else { $null }
-        $pendingRenames = if ($pendingRenameProperty) { @($pendingRenameProperty.Value | Where-Object { $_ -and $_.Trim() -ne '' }) } else { @() }
-        if ($pendingRenames.Length -gt 0) { $reasons += "Pending file rename operations ($($pendingRenames.Length) entr$(if ($pendingRenames.Length -eq 1) {'y'} else {'ies'}))" }
+        $pendingRenameCount = 0
+        if ($pendingRenameProperty) {
+            foreach ($entry in @($pendingRenameProperty.Value)) {
+                if ($entry -and $entry.Trim() -ne '') { $pendingRenameCount++ }
+            }
+        }
+        if ($pendingRenameCount -gt 0) { $reasons += "Pending file rename operations ($pendingRenameCount entr$(if ($pendingRenameCount -eq 1) {'y'} else {'ies'}))" }
         if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName') {
             $active = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName').ComputerName
             $pending = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName').ComputerName
