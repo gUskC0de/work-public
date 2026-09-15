@@ -139,7 +139,8 @@ function Test-InputData {
         $script:PreState = Read-JsonFile $StateJsonPath
         $script:PreNetwork = Read-JsonFile $NetworkJsonPath
         if ([string]$script:PreState.schemaVersion -ne $SchemaVersion -or [string]$script:PreNetwork.schemaVersion -ne $SchemaVersion) { throw "Unsupported SchemaVersion. Expected $SchemaVersion." }
-        if (-not $script:PreState.systemIdentity.computerName) { throw 'The pre-migration computer name is missing.' }
+        if (-not $script:PreState.systemIdentity -or -not $script:PreState.systemIdentity.computerName) { throw 'The pre-migration computer name is missing.' }
+        if (-not $script:PreNetwork.activeAdapters -or @($script:PreNetwork.activeAdapters).Count -eq 0) { throw 'The pre-migration network capture is missing activeAdapters.' }
         Add-Result 'Input data' 'PASS' "Loaded compatible schema $SchemaVersion from $StateDirectory." @($StateJsonPath, $NetworkJsonPath)
         return $true
     } catch { Add-Result 'Input data' 'FAIL' 'Pre-migration JSON is missing, unreadable, or incompatible.' -FailureMessage $_.Exception.Message; return $false }
@@ -198,15 +199,19 @@ function Find-VirtIOAdapters {
     return @($records)
 }
 function Resolve-AdapterMapping {
+    if (-not $script:PreNetwork -or -not $script:PreNetwork.activeAdapters) {
+        Add-Result 'Adapter mapping' 'FAIL' 'The pre-migration network capture is missing or incomplete; no adapter mapping can be created.'
+        return $null
+    }
     # @(...) around a $null property (e.g. missing/malformed JSON) yields a 1-element array containing $null, not empty.
-    $old = @($script:PreNetwork.activeAdapters | Where-Object { $_ })
-    $candidates = @(Find-VirtIOAdapters)
-    $activeAdapters = @($candidates | Where-Object { $_ -and $_.adapter.status -eq 'Up' })
+    $old = @($script:PreNetwork.activeAdapters | Where-Object { $_ -and $_.interfaceAlias })
+    $candidates = @(Find-VirtIOAdapters | Where-Object { $_ -and $_.adapter })
+    $activeAdapters = @($candidates | Where-Object { $_ -and $_.adapter -and $_.adapter.status -eq 'Up' })
     if ($old.Count -ne 1) { Add-Result 'Adapter mapping' 'FAIL' "Pre-migration capture contains $($old.Count) active adapters; automatic mapping requires exactly one."; return $null }
     $virtio = @($candidates | Where-Object { $_ -and $_.isVirtIO })
-    $activeVirtio = @($virtio | Where-Object { $_ -and $_.adapter.status -eq 'Up' })
+    $activeVirtio = @($virtio | Where-Object { $_ -and $_.adapter -and $_.adapter.status -eq 'Up' })
     if ($activeAdapters.Count -ne 1 -or $activeVirtio.Count -ne 1) {
-        $details = @($candidates | ForEach-Object { "Name=$($_.adapter.adapterName), Description=$($_.adapter.interfaceDescription), Status=$($_.adapter.status), VirtIO=$($_.isVirtIO), Provider=$($_.driverProvider), PnP=$($_.pnpFriendlyName)" })
+        $details = @($candidates | ForEach-Object { if ($_ -and $_.adapter) { "Name=$($_.adapter.adapterName), Description=$($_.adapter.interfaceDescription), Status=$($_.adapter.status), VirtIO=$($_.isVirtIO), Provider=$($_.driverProvider), PnP=$($_.pnpFriendlyName)" } })
         Add-Result 'Adapter mapping' 'FAIL' "Found $($activeAdapters.Count) active relevant adapter(s) and $($activeVirtio.Count) active VirtIO candidate(s); automatic mapping is ambiguous." $details
         return $null
     }
