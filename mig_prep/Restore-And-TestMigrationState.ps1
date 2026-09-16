@@ -167,16 +167,30 @@ function Test-CaptureCompleteness {
 function Get-RelevantAdapters {
     @(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.Name -notmatch 'Loopback|ISATAP|Teredo|Tunnel' -and $_.InterfaceDescription -notmatch 'Loopback|ISATAP|Teredo|Tunnel' })
 }
+function Get-AdapterVendorFamily {
+    # Mirrors Export-MigrationState.ps1's classification so a VMware NIC renamed to VirtIO after
+    # migration (e.g. "vmxnet3 Ethernet Adapter" -> "Red Hat VirtIO Ethernet Adapter") is recognized.
+    param([AllowNull()][string]$InterfaceDescription)
+    if ([string]::IsNullOrWhiteSpace($InterfaceDescription)) { return 'Unknown' }
+    if ($InterfaceDescription -match 'vmxnet|VMware|PCNet') { return 'VMware' }
+    if ($InterfaceDescription -match 'VirtIO|NetKVM|Red Hat') { return 'VirtIO' }
+    if ($InterfaceDescription -match 'Hyper-V|Microsoft Hyper-V') { return 'Hyper-V' }
+    return 'Other'
+}
 function Get-AdapterRecord {
     param($Adapter)
-    $config = Get-NetIPConfiguration -InterfaceIndex $Adapter.ifIndex -ErrorAction SilentlyContinue
-    $ip = @(Get-NetIPAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.AddressState -eq 'Preferred' })
-    $dnsClient = Get-DnsClient -InterfaceIndex $Adapter.ifIndex -ErrorAction SilentlyContinue | Select-Object -First 1
-    $dns = @(Get-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ServerAddresses)
-    $ipInterface = Get-NetIPInterface -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Get-NetIPConfiguration/-NetIPInterface/etc. are CDXML-backed; their "no matching objects" error
+    # ignores -ErrorAction SilentlyContinue and terminates under $ErrorActionPreference = 'Stop'. This
+    # happens for any relevant adapter with no bound IPv4 interface (e.g. disconnected, or a leftover
+    # non-present VMware adapter still enumerated during PnP re-discovery), so each lookup is isolated.
+    $config = $null; try { $config = Get-NetIPConfiguration -InterfaceIndex $Adapter.ifIndex -ErrorAction Stop } catch { }
+    $ip = @(); try { $ip = @(Get-NetIPAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_ -and $_.AddressState -eq 'Preferred' }) } catch { }
+    $dnsClient = $null; try { $dnsClient = Get-DnsClient -InterfaceIndex $Adapter.ifIndex -ErrorAction Stop | Select-Object -First 1 } catch { }
+    $dns = @(); try { $dns = @(Get-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop | Select-Object -ExpandProperty ServerAddresses) } catch { }
+    $ipInterface = $null; try { $ipInterface = Get-NetIPInterface -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop | Select-Object -First 1 } catch { }
     [pscustomobject][ordered]@{
-        adapterName = $Adapter.Name; interfaceAlias = $Adapter.Name; interfaceDescription = $Adapter.InterfaceDescription; interfaceIndex = [int]$Adapter.ifIndex; interfaceGuid = $Adapter.InterfaceGuid; macAddress = $Adapter.MacAddress; linkSpeed = $Adapter.LinkSpeed; status = $Adapter.Status.ToString();
-        dhcpEnabled = [bool]($ipInterface -and $ipInterface.Dhcp -eq 'Enabled'); ipv4Addresses = @($ip | ForEach-Object { [pscustomobject][ordered]@{ address = $_.IPAddress; prefixLength = [int]$_.PrefixLength } }); defaultGateways = @($config.IPv4DefaultGateway | ForEach-Object NextHop); dnsServers = @($dns); dnsSuffix = if ($dnsClient) { $dnsClient.ConnectionSpecificSuffix } else { $null }; registerThisConnectionAddress = if ($dnsClient) { $dnsClient.RegisterThisConnectionsAddress } else { $null }; useSuffixWhenRegistering = if ($dnsClient) { $dnsClient.UseSuffixWhenRegistering } else { $null }; interfaceMetric = if ($ipInterface) { [int]$ipInterface.InterfaceMetric } else { 0 }
+        adapterName = $Adapter.Name; interfaceAlias = $Adapter.Name; interfaceDescription = $Adapter.InterfaceDescription; adapterVendorFamily = (Get-AdapterVendorFamily $Adapter.InterfaceDescription); interfaceIndex = [int]$Adapter.ifIndex; interfaceGuid = $Adapter.InterfaceGuid; macAddress = $Adapter.MacAddress; linkSpeed = $Adapter.LinkSpeed; status = $Adapter.Status.ToString();
+        dhcpEnabled = [bool]($ipInterface -and $ipInterface.Dhcp -eq 'Enabled'); ipv4Addresses = @($ip | ForEach-Object { [pscustomobject][ordered]@{ address = $_.IPAddress; prefixLength = [int]$_.PrefixLength } }); defaultGateways = if ($config) { @($config.IPv4DefaultGateway | Where-Object { $_ } | ForEach-Object NextHop) } else { @() }; dnsServers = @($dns); dnsSuffix = if ($dnsClient) { $dnsClient.ConnectionSpecificSuffix } else { $null }; registerThisConnectionAddress = if ($dnsClient) { $dnsClient.RegisterThisConnectionsAddress } else { $null }; useSuffixWhenRegistering = if ($dnsClient) { $dnsClient.UseSuffixWhenRegistering } else { $null }; interfaceMetric = if ($ipInterface) { [int]$ipInterface.InterfaceMetric } else { 0 }
     }
 }
 function Find-VirtIOAdapters {
@@ -372,6 +386,7 @@ function Compare-NetworkState {
     Compare-Values 'Default gateways' (@($script:PreNetwork.activeAdapters | ForEach-Object defaultGateways)) (@($script:CurrentNetwork.activeAdapters | ForEach-Object defaultGateways))
     Compare-Values 'DNS servers' (@($script:PreNetwork.activeAdapters | ForEach-Object dnsServers)) (@($script:CurrentNetwork.activeAdapters | ForEach-Object dnsServers))
     Compare-Values 'Adapter hardware identity' (@($script:PreNetwork.activeAdapters | ForEach-Object { $_.macAddress })) (@($script:CurrentNetwork.activeAdapters | ForEach-Object { $_.macAddress })) $true
+    Compare-Values 'Adapter description/vendor' (@($script:PreNetwork.activeAdapters | ForEach-Object { $_.interfaceDescription })) (@($script:CurrentNetwork.activeAdapters | ForEach-Object { $_.interfaceDescription })) $true
     Compare-Values 'Static routes' (@($script:PreNetwork.ipv4Routes | Where-Object { -not $_.isConnectedRoute -and -not $_.isDefaultRoute } | ForEach-Object { "$($_.destinationPrefix)|$($_.nextHop)" })) (@($script:CurrentNetwork.ipv4Routes | Where-Object { -not $_.isConnectedRoute -and -not $_.isDefaultRoute } | ForEach-Object { "$($_.destinationPrefix)|$($_.nextHop)" }))
 }
 function Compare-DiskState {

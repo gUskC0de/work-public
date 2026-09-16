@@ -183,6 +183,18 @@ function Test-MountedMediaSafety {
     }
 }
 
+function Get-AdapterVendorFamily {
+    # Same NIC hardware presents under different names before/after a VMware-to-Proxmox migration
+    # (e.g. "vmxnet3 Ethernet Adapter" -> "Red Hat VirtIO Ethernet Adapter"); classify by family so
+    # downstream tooling can recognize the expected rename instead of treating it as an anomaly.
+    param([AllowNull()][string]$InterfaceDescription)
+    if ([string]::IsNullOrWhiteSpace($InterfaceDescription)) { return 'Unknown' }
+    if ($InterfaceDescription -match 'vmxnet|VMware|PCNet') { return 'VMware' }
+    if ($InterfaceDescription -match 'VirtIO|NetKVM|Red Hat') { return 'VirtIO' }
+    if ($InterfaceDescription -match 'Hyper-V|Microsoft Hyper-V') { return 'Hyper-V' }
+    return 'Other'
+}
+
 function Get-ActiveAdapters {
     $adapters = @(Get-NetAdapter -ErrorAction Stop | Where-Object {
         $_.HardwareInterface -and $_.Status -eq 'Up' -and
@@ -200,6 +212,7 @@ function Get-ActiveAdapters {
             adapterName = $_.Name
             interfaceAlias = $_.Name
             interfaceDescription = $_.InterfaceDescription
+            adapterVendorFamily = Get-AdapterVendorFamily $_.InterfaceDescription
             interfaceIndex = [int]$_.ifIndex
             interfaceGuid = $_.InterfaceGuid
             macAddress = $_.MacAddress
@@ -207,7 +220,7 @@ function Get-ActiveAdapters {
             status = $_.Status.ToString()
             dhcpEnabled = [bool]($ipInterface -and $ipInterface.Dhcp -eq 'Enabled')
             ipv4Addresses = @($addresses | ForEach-Object { [pscustomobject][ordered]@{ address = $_.IPAddress; prefixLength = [int]$_.PrefixLength; subnetMask = Convert-PrefixToMask $_.PrefixLength } })
-            defaultGateways = if ($configuration) { @($configuration.IPv4DefaultGateway | ForEach-Object NextHop) } else { @() }
+            defaultGateways = if ($configuration) { @($configuration.IPv4DefaultGateway | Where-Object { $_ } | ForEach-Object NextHop) } else { @() }
             dnsServers = @($dns)
             dnsSuffix = if ($dnsClient) { $dnsClient.ConnectionSpecificSuffix } else { $null }
             registerThisConnectionAddress = if ($dnsClient) { $dnsClient.RegisterThisConnectionsAddress } else { $null }
@@ -418,7 +431,7 @@ try {
         Add-Result 'Active network adapter' 'FAIL' 'No active network adapter detected; automatic capture stopped.'
         exit 40
     }
-    Add-Result 'Active network adapter' 'PASS' "Exactly one active adapter detected: $($activeAdapters[0].interfaceAlias)." @("$($activeAdapters[0].interfaceDescription), MAC=$($activeAdapters[0].macAddress), IfIndex=$($activeAdapters[0].interfaceIndex)")
+    Add-Result 'Active network adapter' 'PASS' "Exactly one active adapter detected: $($activeAdapters[0].interfaceAlias)." @("$($activeAdapters[0].interfaceDescription), MAC=$($activeAdapters[0].macAddress), IfIndex=$($activeAdapters[0].interfaceIndex)", "Note: after migration to Proxmox, this NIC is expected to be re-detected as a VirtIO adapter (e.g. 'Red Hat VirtIO Ethernet Adapter') with the same MAC address; the restore script matches it by driver signature, not by adapter name.")
     if ($ValidateOnly) { Write-Log 'ValidateOnly completed; no complete capture files were written.' ([ConsoleColor]::Cyan); exit 0 }
 
     $os = Get-CimInstance Win32_OperatingSystem
