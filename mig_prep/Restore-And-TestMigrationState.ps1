@@ -398,7 +398,8 @@ function Compare-DiskState {
     Compare-Values 'Partition and volume layout' (@($script:PreState.partitionsAndVolumes | ForEach-Object { "$($_.driveLetter)|$($_.volumeLabel)|$($_.fileSystem)|$($_.mountPoints -join ',')" })) (@(Get-PartitionVolumeStateForComparison))
 }
 function Get-PartitionVolumeStateForComparison {
-    $output = @(); foreach ($partition in @(Get-Partition -ErrorAction SilentlyContinue)) { $volume = $partition | Get-Volume -ErrorAction SilentlyContinue; $output += "$($volume.DriveLetter)|$($volume.FileSystemLabel)|$($volume.FileSystem)|$($volume.Path)" }; return @($output)
+    # $volume is $null for partitions with no accessible volume (e.g. Recovery, EFI, MSR).
+    $output = @(); foreach ($partition in @(Get-Partition -ErrorAction SilentlyContinue)) { $volume = $null; try { $volume = $partition | Get-Volume -ErrorAction Stop } catch { }; $output += "$(if ($volume) { $volume.DriveLetter }else{$null})|$(if ($volume) { $volume.FileSystemLabel }else{$null})|$(if ($volume) { $volume.FileSystem }else{$null})|$(if ($volume) { $volume.Path }else{$null})" }; return @($output)
 }
 function Compare-Services {
     $current = @(Get-CimInstance Win32_Service | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name); $before = @($script:PreState.services.runningBeforeMigration); $missing = @($before | Where-Object { $_ -notin $current -and $_ -notmatch 'VMTools|VGAuthService' })
