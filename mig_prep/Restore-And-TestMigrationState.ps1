@@ -5,9 +5,10 @@
 .DESCRIPTION
     Reads Export-MigrationState.ps1 output, safely maps the former VMware NIC to a
     single VirtIO adapter, optionally restores IPv4/DNS/routes, removes only clearly
-    identified non-present VMware adapters, and compares current state with the capture.
-    Networking is never changed in ValidateOnly or CompareOnly mode. Every modifying
-    operation is guarded by ShouldProcess and therefore supports -WhatIf and -Confirm.
+    identified non-present VMware adapters, brings offline disks back online, and
+    compares current state with the capture. Networking and disk state are never
+    changed in ValidateOnly or CompareOnly mode. Every modifying operation is guarded
+    by ShouldProcess and therefore supports -WhatIf and -Confirm.
 
 .PARAMETER StateDirectory
     Directory containing PreMigrationState.json and NetworkConfiguration.json.
@@ -236,6 +237,36 @@ function Get-HiddenVMwareAdapters {
     if (-not (Get-Command Get-PnpDevice -ErrorAction SilentlyContinue)) { return @() }
     $devices = @(Get-PnpDevice -Class Net -PresentOnly:$false -ErrorAction SilentlyContinue | Where-Object { -not $_.Present -and $_.FriendlyName -match 'VMware|VMXNET|PCNet|E1000' })
     return @($devices | ForEach-Object { [pscustomobject][ordered]@{ instanceId = $_.InstanceId; friendlyName = $_.FriendlyName; status = $_.Status; present = [bool]$_.Present; class = $_.Class } })
+}
+function Repair-OfflineDisks {
+    # Data disks commonly come up Offline after a migration because of the Windows SAN policy; bring them
+    # back online so subsequent disk/volume comparisons see the real, expected state.
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    param()
+    $disks = @(Get-Disk -ErrorAction Stop)
+    $offline = @($disks | Where-Object { $_ -and $_.IsOffline })
+    $details = @($offline | ForEach-Object { "Disk $($_.Number): '$($_.FriendlyName)', sizeGB=$([math]::Round($_.Size / 1GB, 2)), readOnly=$($_.IsReadOnly)" })
+    if ($offline.Count -eq 0) { Add-Result 'Disk online state' 'PASS' 'All disks are online.'; return }
+    if ($Mode -ne 'ApplyNetwork' -and $Mode -ne 'Full') {
+        Add-Result 'Disk online state' 'WARNING' "$($offline.Count) disk(s) are offline. Run with -Mode ApplyNetwork or -Mode Full to bring them online." $details
+        return
+    }
+    $broughtOnline = @(); $failed = @(); $previewed = @()
+    foreach ($disk in $offline) {
+        if (-not $PSCmdlet.ShouldProcess("Disk $($disk.Number) ($($disk.FriendlyName))", 'Bring online')) { $previewed += $disk.Number; continue }
+        try {
+            if ($disk.IsReadOnly) { Set-Disk -Number $disk.Number -IsReadOnly $false -Confirm:$false -ErrorAction Stop }
+            Set-Disk -Number $disk.Number -IsOffline $false -Confirm:$false -ErrorAction Stop
+            $broughtOnline += $disk.Number
+            Add-Action 'Disk online state' 'APPLIED' "Brought disk $($disk.Number) ('$($disk.FriendlyName)') online."
+        } catch {
+            $failed += "Disk $($disk.Number): $($_.Exception.Message)"
+            Add-Action 'Disk online state' 'FAILED' "Could not bring disk $($disk.Number) online: $($_.Exception.Message)"
+        }
+    }
+    if ($failed.Count -gt 0) { Add-Result 'Disk online state' 'WARNING' "$($broughtOnline.Count) disk(s) brought online; $($failed.Count) disk(s) could not be brought online." ($details + $failed) }
+    elseif ($previewed.Count -gt 0 -and $broughtOnline.Count -eq 0) { Add-Result 'Disk online state' 'WARNING' "$($previewed.Count) offline disk(s) previewed with WhatIf; no changes were made." $details }
+    else { Add-Result 'Disk online state' 'PASS' "$($broughtOnline.Count) offline disk(s) were brought online." $details }
 }
 function Save-RollbackState {
     param($Mapping)
@@ -515,6 +546,7 @@ try {
     if (-not (Test-InputData)) { $null = Write-Reports; exit 20 }
     if (-not (Test-CaptureCompleteness)) { $null = Write-Reports; exit 20 }
     if (-not (Test-ComputerIdentity)) { $null = Write-Reports; exit 20 }
+    Invoke-SafePart 'Disk online state' { Repair-OfflineDisks }
     $mapping = Resolve-AdapterMapping
     if (-not $mapping) { $null = Write-Reports; exit 30 }
     if ($Mode -eq 'ValidateOnly') { Add-Result 'Mode' 'PASS' 'Validation-only mode selected; no network changes were requested.' }
