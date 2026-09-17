@@ -1,6 +1,6 @@
 # VirtIO SCSI driver setup
 
-`mig_prep.ps1` downloads and installs the pinned VirtIO guest tools release, downloads the pinned `load-virtio-scsi-on-boot.ps1` commit, initializes the VirtIO SCSI driver, and independently verifies the result.
+`mig_prep.ps1` downloads and installs the pinned VirtIO guest tools release, downloads the pinned `load-virtio-scsi-on-boot.ps1` commit, initializes the VirtIO SCSI driver, independently verifies the result, and then silently removes VMware Tools if it is installed.
 
 ## Run
 
@@ -43,6 +43,16 @@ To place the status and log files elsewhere:
 
 ```powershell
 .\mig_prep.ps1 -StatusPath 'C:\ProgramData\VirtIO\driver-status.json' -LogPath 'C:\ProgramData\VirtIO\driver-install.log'
+```
+
+## VMware Tools removal
+
+After the VirtIO SCSI driver is installed and verified, the script silently removes VMware Tools if it detects it (via the `VMTools` service or its Programs-and-Features registry entry), using its MSI product code with `msiexec /x ... /qn /norestart`. Removal is independently verified afterward. A removal failure is recorded as a `Failed` stage in `driver-status.json` but does not fail the overall run, since the VirtIO driver install already succeeded.
+
+To skip this step and leave VMware Tools in place:
+
+```powershell
+.\mig_prep.ps1 -SkipVMwareToolsRemoval
 ```
 
 ## Offline use

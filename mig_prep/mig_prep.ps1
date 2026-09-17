@@ -9,7 +9,8 @@ param(
     [switch]$AllowUnsignedInstaller,
     [switch]$KeepArtifacts,
     [string]$InstallerSourcePath = '',
-    [string]$InitScriptSourcePath = ''
+    [string]$InitScriptSourcePath = '',
+    [switch]$SkipVMwareToolsRemoval
 )
 
 Set-StrictMode -Version Latest
@@ -66,6 +67,45 @@ function Assert-Administrator {
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw 'This script must be run as Administrator.'
     }
+}
+
+function Get-VMwareToolsUninstallInfo {
+    $paths = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq 'VMware Tools' } | Select-Object -First 1
+}
+
+function Remove-VMwareTools {
+    if ($SkipVMwareToolsRemoval) {
+        Set-Stage 'vmwareToolsRemoval' 'Skipped' '-SkipVMwareToolsRemoval was supplied.'
+        return
+    }
+    $service = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
+    $uninstallInfo = Get-VMwareToolsUninstallInfo
+    if (-not $service -and -not $uninstallInfo) {
+        Set-Stage 'vmwareToolsRemoval' 'Succeeded' 'VMware Tools is not installed.'
+        return
+    }
+    # PSChildName on the Uninstall registry key is the MSI product code, required for a silent msiexec /x removal.
+    if (-not $uninstallInfo -or -not $uninstallInfo.PSChildName) {
+        throw 'VMware Tools appears installed, but its MSI product code could not be determined for silent removal. Remove it manually via Programs and Features.'
+    }
+    $productCode = $uninstallInfo.PSChildName
+    $uninstallLog = Join-Path $WorkingDirectory 'vmware-tools-uninstall.log'
+    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', "`"$uninstallLog`"") -Wait -PassThru
+    if ($process.ExitCode -notin 0, 3010) {
+        throw "VMware Tools uninstall failed with exit code $($process.ExitCode). See $uninstallLog."
+    }
+    $remainingService = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
+    $remainingUninstallInfo = Get-VMwareToolsUninstallInfo
+    if ($remainingService -or $remainingUninstallInfo) {
+        throw 'VMware Tools uninstall reported success, but the service or registry entry is still present.'
+    }
+    $message = "VMware Tools removed (product code $productCode)."
+    if ($process.ExitCode -eq 3010) { $message += ' A reboot is pending to complete the removal.' }
+    Set-Stage 'vmwareToolsRemoval' 'Succeeded' $message
 }
 
 try {
@@ -155,6 +195,15 @@ try {
         throw "Independent verification failed: $($failedChecks -join ', ')."
     }
     Set-Stage 'verification' 'Succeeded' 'vioscsi service, signed driver, and critical-device entries are present.'
+
+    try {
+        Remove-VMwareTools
+    } catch {
+        # VMware Tools removal is best-effort; a failure here must not mask a successful VirtIO driver install.
+        Set-Stage 'vmwareToolsRemoval' 'Failed' $_.Exception.Message
+        Write-Log "WARNING: VMware Tools removal failed: $($_.Exception.Message)"
+    }
+
     Write-Status 'Succeeded' 'VirtIO SCSI driver installed, initialized, and verified.' $verificationDetails
     Write-Log "Completed successfully. Status written to $StatusPath"
     exit 0
