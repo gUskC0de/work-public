@@ -74,7 +74,12 @@ function Get-VMwareToolsUninstallInfo {
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
-    Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq 'VMware Tools' } | Select-Object -First 1
+    # Many Uninstall subkeys have no DisplayName value at all; under Set-StrictMode, $_.DisplayName
+    # would throw for those, so check PSObject.Properties first instead of accessing it directly.
+    Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object {
+        $displayNameProperty = $_.PSObject.Properties['DisplayName']
+        $displayNameProperty -and $displayNameProperty.Value -eq 'VMware Tools'
+    } | Select-Object -First 1
 }
 
 function Remove-VMwareTools {
