@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Captures read-only system, network, disk, service, role, share, task, port, and
-    event-log state before a Veeam restore to Proxmox. The safety gate refuses to
+    event-log state before a Veeam backup restore to Proxmox. The safety gate refuses to
     capture when optical media is mounted or the VM has zero or multiple active NICs.
     No drivers, devices, routes, services, disks, credentials, or network settings are
     changed, and no information is transmitted.
