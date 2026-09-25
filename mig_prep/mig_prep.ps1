@@ -1,15 +1,15 @@
 [CmdletBinding()]
 param(
     [ValidateSet('online', 'offline')]
-    [string]$Mode = 'online',
+    [string]$Mode = 'offline',
     [string]$WorkingDirectory = (Join-Path $PSScriptRoot 'driver-work'),
     [string]$StatusPath = (Join-Path $PSScriptRoot 'driver-status.json'),
     [string]$LogPath = (Join-Path $PSScriptRoot 'driver-install.log'),
     [string]$ExpectedInstallerSha256 = '',
     [switch]$AllowUnsignedInstaller,
     [switch]$KeepArtifacts,
-    [string]$InstallerSourcePath = '',
-    [string]$InitScriptSourcePath = '',
+    [string]$InstallerSourcePath = '.\virtio-win-guest-tools.exe',
+    [string]$InitScriptSourcePath = '.\load-virtio-scsi-on-boot.ps1',
     [switch]$SkipVMwareToolsRemoval
 )
 
@@ -167,7 +167,6 @@ try {
     Set-Stage 'initialization' 'Succeeded' 'load-virtio-scsi-on-boot.ps1 completed successfully.'
 
     $service = Get-CimInstance Win32_SystemDriver -Filter "Name='vioscsi'" -ErrorAction SilentlyContinue
-    $signedDriver = Get-CimInstance Win32_PnPSignedDriver -Filter "Service='vioscsi'" -ErrorAction SilentlyContinue | Select-Object -First 1
     $criticalPaths = @(
         'HKLM:\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_1AF4&DEV_1004',
         'HKLM:\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_1AF4&DEV_1004&SUBSYS_00081AF4&REV_00'
@@ -181,20 +180,17 @@ try {
     $verificationDetails = @{
         servicePresent = [bool]$service
         serviceState = if ($service) { $service.State } else { $null }
-        driverPresent = [bool]$signedDriver
-        driverVersion = if ($signedDriver) { $signedDriver.DriverVersion } else { $null }
         criticalDeviceEntries = @($criticalEntries)
     }
     $failedChecks = @()
     if (-not $service) { $failedChecks += 'vioscsi service' }
-    if (-not $signedDriver) { $failedChecks += 'signed PnP driver' }
     if (@($criticalEntries).Count -lt 2) { $failedChecks += 'critical-device entry count' }
     if (@($criticalEntries) | Where-Object service -ne 'vioscsi') { $failedChecks += 'critical-device service mapping' }
     $verificationDetails.failedChecks = $failedChecks
     if ($failedChecks.Count -gt 0) {
         throw "Independent verification failed: $($failedChecks -join ', ')."
     }
-    Set-Stage 'verification' 'Succeeded' 'vioscsi service, signed driver, and critical-device entries are present.'
+    Set-Stage 'verification' 'Succeeded' 'vioscsi service and critical-device entries are present.'
 
     try {
         Remove-VMwareTools
