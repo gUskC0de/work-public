@@ -267,30 +267,34 @@ function Test-DCReachability {
        calls instead of letting them run into their own (much longer) connection timeouts. #>
     param([Parameter(Mandatory)][string]$DCName)
     try {
-        Resolve-DnsName -Name $DCName -ErrorAction Stop | Out-Null
+        $ipv4Addresses = @(Resolve-DnsName -Name $DCName -Type A -ErrorAction Stop |
+            Where-Object { $_.Type -eq 'A' -and $_.IPAddress } |
+            Select-Object -ExpandProperty IPAddress -Unique)
+        if ($ipv4Addresses.Count -eq 0) { throw 'No IPv4 (A) record was returned.' }
     }
     catch {
         return @{
-            Result        = New-CheckResult -Name 'Reachability' -Status 'Failed' -Detail "DNS resolution failed: $($_.Exception.Message)"
+            Result        = New-CheckResult -Name 'Reachability' -Status 'Failed' -Detail "DNS IPv4 resolution failed: $($_.Exception.Message)"
             RpcAvailable  = $false
             AdwsAvailable = $false
             SmbAvailable  = $false
         }
     }
-    $ldapOk = Test-NetConnection -ComputerName $DCName -Port 389 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+    $ipv4Address = $ipv4Addresses[0]
+    $ldapOk = Test-NetConnection -ComputerName $ipv4Address -Port 389 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
     if (-not $ldapOk) {
         return @{
-            Result        = New-CheckResult -Name 'Reachability' -Status 'Failed' -Detail 'LDAP port 389 unreachable'
+            Result        = New-CheckResult -Name 'Reachability' -Status 'Failed' -Detail "LDAP port 389 unreachable on IPv4 address $ipv4Address"
             RpcAvailable  = $false
             AdwsAvailable = $false
             SmbAvailable  = $false
         }
     }
-    $rpcOk = [bool](Test-NetConnection -ComputerName $DCName -Port 135 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
-    $smbOk = [bool](Test-NetConnection -ComputerName $DCName -Port 445 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
-    $adwsOk = [bool](Test-NetConnection -ComputerName $DCName -Port 9389 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+    $rpcOk = [bool](Test-NetConnection -ComputerName $ipv4Address -Port 135 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+    $smbOk = [bool](Test-NetConnection -ComputerName $ipv4Address -Port 445 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+    $adwsOk = [bool](Test-NetConnection -ComputerName $ipv4Address -Port 9389 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
     return @{
-        Result        = New-CheckResult -Name 'Reachability' -Status 'Passed' -Detail "DNS resolves and LDAP port 389 reachable (RPC 135: $rpcOk, SMB 445: $smbOk, ADWS 9389: $adwsOk)"
+        Result        = New-CheckResult -Name 'Reachability' -Status 'Passed' -Detail "DNS IPv4 address $ipv4Address resolves and LDAP port 389 is reachable (RPC 135: $rpcOk, SMB 445: $smbOk, ADWS 9389: $adwsOk)"
         RpcAvailable  = $rpcOk
         AdwsAvailable = $adwsOk
         SmbAvailable  = $smbOk
