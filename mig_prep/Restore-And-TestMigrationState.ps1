@@ -526,7 +526,7 @@ function Restore-Network {
 function Get-Summary {
     $counts = @{}; foreach ($state in @('PASS', 'WARNING', 'FAIL', 'EXPECTED_CHANGE', 'NOT_CHECKED')) { $counts[$state] = @($script:Results | Where-Object state -eq $state).Count }
     $status = if ($counts.FAIL -gt 0) { 'FAIL' } elseif ($counts.WARNING -gt 0 -or $counts.NOT_CHECKED -gt 0) { 'WARNING' } else { 'PASS' }
-    return [ordered]@{ overallStatus = $status; counts = $counts; blockingFailures = @($script:Results | Where-Object state -eq 'FAIL' | ForEach-Object { "$($_.name): $($_.summary)" }); warnings = @($script:Results | Where-Object { $_.state -eq 'WARNING' -or $_.state -eq 'NOT_CHECKED' } | ForEach-Object { "$($_.name): $($_.summary)" }); manualActions = @($script:Actions | Where-Object { $_.state -match 'MANUAL|FAILED' } | ForEach-Object summary) }
+    return [ordered]@{ overallStatus = $status; counts = $counts; blockingFailures = @($script:Results | Where-Object state -eq 'FAIL' | ForEach-Object { "$($_.name): $($_.summary)" }); warnings = @($script:Results | Where-Object { $_.state -eq 'WARNING' -or $_.state -eq 'NOT_CHECKED' } | ForEach-Object { "$($_.name): $($_.summary)" }); manualActions = @($script:Actions | Where-Object { $_.state -match 'MANUAL|FAILED' } | ForEach-Object { $_.summary }) }
 }
 function Write-Reports {
     $summary = Get-Summary
