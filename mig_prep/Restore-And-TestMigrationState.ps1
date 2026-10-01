@@ -238,6 +238,17 @@ function Get-HiddenVMwareAdapters {
     $devices = @(Get-PnpDevice -Class Net -PresentOnly:$false -ErrorAction SilentlyContinue | Where-Object { -not $_.Present -and $_.FriendlyName -match 'VMware|VMXNET|PCNet|E1000' })
     return @($devices | ForEach-Object { [pscustomobject][ordered]@{ instanceId = $_.InstanceId; friendlyName = $_.FriendlyName; status = $_.Status; present = [bool]$_.Present; class = $_.Class } })
 }
+function Invoke-DiskpartOnline {
+    param([Parameter(Mandatory)][uint32]$DiskNumber)
+    $scriptPath = [System.IO.Path]::GetTempFileName()
+    try {
+        @("select disk $DiskNumber", 'attributes disk clear readonly', 'online disk') | Set-Content -Path $scriptPath -Encoding ASCII -ErrorAction Stop
+        $output = @(& diskpart.exe /s $scriptPath 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "diskpart exited with code ${LASTEXITCODE}: $($output -join ' ')" }
+        return ($output -join ' ')
+    }
+    finally { Remove-Item -Path $scriptPath -Force -ErrorAction SilentlyContinue }
+}
 function Repair-OfflineDisks {
     # Data disks commonly come up Offline after a migration because of the Windows SAN policy; bring them
     # back online so subsequent disk/volume comparisons see the real, expected state.
@@ -255,13 +266,24 @@ function Repair-OfflineDisks {
     foreach ($disk in $offline) {
         if (-not $PSCmdlet.ShouldProcess("Disk $($disk.Number) ($($disk.FriendlyName))", 'Bring online')) { $previewed += $disk.Number; continue }
         try {
-            if ($disk.IsReadOnly) { Set-Disk -Number $disk.Number -IsReadOnly $false -Confirm:$false -ErrorAction Stop }
-            Set-Disk -Number $disk.Number -IsOffline $false -Confirm:$false -ErrorAction Stop
+            $method = 'Set-Disk'
+            try {
+                if ($disk.IsReadOnly) { Set-Disk -Number $disk.Number -IsReadOnly $false -Confirm:$false -ErrorAction Stop }
+                Set-Disk -Number $disk.Number -IsOffline $false -Confirm:$false -ErrorAction Stop
+            } catch {
+                $setDiskError = $_.Exception.Message
+                Invoke-DiskpartOnline -DiskNumber $disk.Number | Out-Null
+                $method = 'diskpart fallback after Set-Disk error: ' + $setDiskError
+            }
+            $updatedDisk = Get-Disk -Number $disk.Number -ErrorAction Stop
+            if ($updatedDisk.IsOffline) { throw 'The disk remained offline after the requested operation.' }
             $broughtOnline += $disk.Number
-            Add-Action 'Disk online state' 'APPLIED' "Brought disk $($disk.Number) ('$($disk.FriendlyName)') online."
+            Add-Action 'Disk online state' 'APPLIED' "Brought disk $($disk.Number) ('$($disk.FriendlyName)') online using $method."
         } catch {
-            $failed += "Disk $($disk.Number): $($_.Exception.Message)"
+            $message = "Disk $($disk.Number): $($_.Exception.Message)"
+            $failed += $message
             Add-Action 'Disk online state' 'FAILED' "Could not bring disk $($disk.Number) online: $($_.Exception.Message)"
+            Write-Log $message ([ConsoleColor]::Red)
         }
     }
     if ($failed.Count -gt 0) { Add-Result 'Disk online state' 'WARNING' "$($broughtOnline.Count) disk(s) brought online; $($failed.Count) disk(s) could not be brought online." ($details + $failed) }
