@@ -257,6 +257,24 @@ function Test-EventTextSeverity {
     return $false
 }
 
+function Test-TcpPort {
+    <# Performs a bounded TCP connection attempt without Test-NetConnection's potentially long wait. #>
+    param(
+        [Parameter(Mandatory)][string]$ComputerName,
+        [Parameter(Mandatory)][int]$Port,
+        [Parameter(Mandatory = $false)][int]$TimeoutMilliseconds = 5000
+    )
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $connection = $client.BeginConnect($ComputerName, $Port, $null, $null)
+        if (-not $connection.AsyncWaitHandle.WaitOne($TimeoutMilliseconds, $false)) { return $false }
+        $client.EndConnect($connection)
+        return $true
+    }
+    catch { return $false }
+    finally { $client.Dispose() }
+}
+
 #endregion Helper functions
 
 #region Per-DC check functions
@@ -281,7 +299,7 @@ function Test-DCReachability {
         }
     }
     $ipv4Address = $ipv4Addresses[0]
-    $ldapOk = Test-NetConnection -ComputerName $ipv4Address -Port 389 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+    $ldapOk = Test-TcpPort -ComputerName $ipv4Address -Port 389
     if (-not $ldapOk) {
         return @{
             Result        = New-CheckResult -Name 'Reachability' -Status 'Failed' -Detail "LDAP port 389 unreachable on IPv4 address $ipv4Address"
@@ -290,9 +308,9 @@ function Test-DCReachability {
             SmbAvailable  = $false
         }
     }
-    $rpcOk = [bool](Test-NetConnection -ComputerName $ipv4Address -Port 135 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
-    $smbOk = [bool](Test-NetConnection -ComputerName $ipv4Address -Port 445 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
-    $adwsOk = [bool](Test-NetConnection -ComputerName $ipv4Address -Port 9389 -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+    $rpcOk = Test-TcpPort -ComputerName $ipv4Address -Port 135
+    $smbOk = Test-TcpPort -ComputerName $ipv4Address -Port 445
+    $adwsOk = Test-TcpPort -ComputerName $ipv4Address -Port 9389
     return @{
         Result        = New-CheckResult -Name 'Reachability' -Status 'Passed' -Detail "DNS IPv4 address $ipv4Address resolves and LDAP port 389 is reachable (RPC 135: $rpcOk, SMB 445: $smbOk, ADWS 9389: $adwsOk)"
         RpcAvailable  = $rpcOk
