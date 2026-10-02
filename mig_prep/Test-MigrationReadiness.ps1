@@ -51,8 +51,27 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+function New-MigrationPath {
+    param([string]$ScriptName)
+    $datestamp = (Get-Date).ToString('yyyy-MM-dd')
+    $baseFolder = "C:\Rutin_migration_$datestamp\$ScriptName"
+    if (-not (Test-Path $baseFolder)) {
+        New-Item -ItemType Directory -Path $baseFolder -Force | Out-Null
+        return $baseFolder
+    }
+    $final = $baseFolder
+    $suffix = 1
+    while (Test-Path $final) {
+        $suffix++
+        $timestamp = (Get-Date).ToString('HHmm')
+        $final = "$baseFolder`_$timestamp`_$suffix"
+    }
+    New-Item -ItemType Directory -Path $final -Force | Out-Null
+    return $final
+}
+
 # Configuration and report paths. The script only writes these local report artifacts.
-$RootPath = 'C:\Migration'
+$RootPath = New-MigrationPath -ScriptName 'Test-MigrationReadiness'
 $LogDirectory = Join-Path $RootPath 'Logs'
 $LogPath = Join-Path $LogDirectory 'MigrationReadiness.log'
 $JsonPath = Join-Path $RootPath 'MigrationReadiness.json'

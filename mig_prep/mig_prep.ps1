@@ -2,9 +2,9 @@
 param(
     [ValidateSet('online', 'offline')]
     [string]$Mode = 'offline',
-    [string]$WorkingDirectory = (Join-Path $PSScriptRoot 'driver-work'),
-    [string]$StatusPath = (Join-Path $PSScriptRoot 'driver-status.json'),
-    [string]$LogPath = (Join-Path $PSScriptRoot 'driver-install.log'),
+    [string]$WorkingDirectory = '',
+    [string]$StatusPath = '',
+    [string]$LogPath = '',
     [string]$ExpectedInstallerSha256 = '',
     [switch]$AllowUnsignedInstaller,
     [switch]$KeepArtifacts,
@@ -15,8 +15,31 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function New-MigrationPath {
+    param([string]$ScriptName)
+    $datestamp = (Get-Date).ToString('yyyy-MM-dd')
+    $baseFolder = "C:\Rutin_migration_$datestamp\$ScriptName"
+    if (-not (Test-Path $baseFolder)) {
+        New-Item -ItemType Directory -Path $baseFolder -Force | Out-Null
+        return $baseFolder
+    }
+    $final = $baseFolder
+    $suffix = 1
+    while (Test-Path $final) {
+        $suffix++
+        $timestamp = (Get-Date).ToString('HHmm')
+        $final = "$baseFolder`_$timestamp`_$suffix"
+    }
+    New-Item -ItemType Directory -Path $final -Force | Out-Null
+    return $final
+}
+
+$migrationBasePath = New-MigrationPath -ScriptName 'mig_prep'
 $installerUrl = 'https://fedora-virt.repo.nfrance.com/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.271-1/virtio-win-guest-tools.exe'
 $initScriptUrl = 'https://raw.githubusercontent.com/croit/load-virtio-scsi-on-boot/d6f54673916e0d9a51bb47e61a67cb803df2585e/load-virtio-scsi-on-boot.ps1'
+$WorkingDirectory = Join-Path $migrationBasePath 'driver-work'
+$StatusPath = Join-Path $migrationBasePath 'driver-status.json'
+$LogPath = Join-Path $migrationBasePath 'driver-install.log'
 $installerPath = Join-Path $WorkingDirectory 'virtio-win-guest-tools.exe'
 $initScriptPath = Join-Path $WorkingDirectory 'load-virtio-scsi-on-boot.ps1'
 $startedAt = [DateTime]::UtcNow

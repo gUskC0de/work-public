@@ -57,7 +57,7 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
-    [string]$OutputPath = 'C:\DCHealth',
+    [string]$OutputPath = '',
 
     [Parameter(Mandatory = $false)]
     [ValidateScript({
@@ -72,6 +72,27 @@ param(
 # Read-only script: no AD/DNS/service/registry/eventlog writes are performed anywhere below.
 $ErrorActionPreference = 'Continue'
 Set-StrictMode -Version Latest
+
+function New-MigrationPath {
+    param([string]$ScriptName)
+    $datestamp = (Get-Date).ToString('yyyy-MM-dd')
+    $baseFolder = "C:\Rutin_migration_$datestamp\$ScriptName"
+    if (-not (Test-Path $baseFolder)) {
+        New-Item -ItemType Directory -Path $baseFolder -Force | Out-Null
+        return $baseFolder
+    }
+    $final = $baseFolder
+    $suffix = 1
+    while (Test-Path $final) {
+        $suffix++
+        $timestamp = (Get-Date).ToString('HHmm')
+        $final = "$baseFolder`_$timestamp`_$suffix"
+    }
+    New-Item -ItemType Directory -Path $final -Force | Out-Null
+    return $final
+}
+
+$OutputPath = New-MigrationPath -ScriptName 'Test-DCMigrationHealth'
 
 $Script:SchemaVersion = '1.1'
 $Script:EventLogNames = @('Directory Service', 'DNS Server', 'DFS Replication', 'System')

@@ -49,7 +49,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [string]$StateDirectory = 'C:\Migration\State',
+    [string]$StateDirectory = '',
     [ValidateSet('ValidateOnly', 'ApplyNetwork', 'CompareOnly', 'Full')]
     [string]$Mode = 'ValidateOnly',
     [switch]$Force,
@@ -60,10 +60,41 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-$RootPath = 'C:\Migration'
+
+function New-MigrationPath {
+    param([string]$ScriptName)
+    $datestamp = (Get-Date).ToString('yyyy-MM-dd')
+    $baseFolder = "C:\Rutin_migration_$datestamp\$ScriptName"
+    if (-not (Test-Path $baseFolder)) {
+        New-Item -ItemType Directory -Path $baseFolder -Force | Out-Null
+        return $baseFolder
+    }
+    $final = $baseFolder
+    $suffix = 1
+    while (Test-Path $final) {
+        $suffix++
+        $timestamp = (Get-Date).ToString('HHmm')
+        $final = "$baseFolder`_$timestamp`_$suffix"
+    }
+    New-Item -ItemType Directory -Path $final -Force | Out-Null
+    return $final
+}
+
+$RootPath = New-MigrationPath -ScriptName 'Restore-And-TestMigrationState'
 $ReportDirectory = Join-Path $RootPath 'Reports'
 $LogDirectory = Join-Path $RootPath 'Logs'
 $LogPath = Join-Path $LogDirectory 'PostMigrationValidation.log'
+
+# If StateDirectory is not provided, use the Export-MigrationState output
+if (-not $StateDirectory) {
+    $exportPath = "C:\Rutin_migration_$((Get-Date).ToString('yyyy-MM-dd'))\Export-MigrationState\State"
+    if (Test-Path $exportPath) {
+        $StateDirectory = $exportPath
+    } else {
+        $StateDirectory = 'C:\Rutin_migration_$((Get-Date).ToString("yyyy-MM-dd"))\Export-MigrationState\State'
+    }
+}
+
 $StateJsonPath = Join-Path $StateDirectory 'PreMigrationState.json'
 $NetworkJsonPath = Join-Path $StateDirectory 'NetworkConfiguration.json'
 $RollbackPath = Join-Path $StateDirectory 'PreNetworkChangeRollback.json'
