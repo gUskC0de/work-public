@@ -9,8 +9,7 @@ param(
     [switch]$AllowUnsignedInstaller,
     [switch]$KeepArtifacts,
     [string]$InstallerSourcePath = '.\virtio-win-guest-tools.exe',
-    [string]$InitScriptSourcePath = '.\load-virtio-scsi-on-boot.ps1',
-    [switch]$SkipVMwareToolsRemoval
+    [string]$InitScriptSourcePath = '.\load-virtio-scsi-on-boot.ps1'
 )
 
 Set-StrictMode -Version Latest
@@ -80,37 +79,6 @@ function Get-VMwareToolsUninstallInfo {
         $displayNameProperty = $_.PSObject.Properties['DisplayName']
         $displayNameProperty -and $displayNameProperty.Value -eq 'VMware Tools'
     } | Select-Object -First 1
-}
-
-function Remove-VMwareTools {
-    if ($SkipVMwareToolsRemoval) {
-        Set-Stage 'vmwareToolsRemoval' 'Skipped' '-SkipVMwareToolsRemoval was supplied.'
-        return
-    }
-    $service = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
-    $uninstallInfo = Get-VMwareToolsUninstallInfo
-    if (-not $service -and -not $uninstallInfo) {
-        Set-Stage 'vmwareToolsRemoval' 'Succeeded' 'VMware Tools is not installed.'
-        return
-    }
-    # PSChildName on the Uninstall registry key is the MSI product code, required for a silent msiexec /x removal.
-    if (-not $uninstallInfo -or -not $uninstallInfo.PSChildName) {
-        throw 'VMware Tools appears installed, but its MSI product code could not be determined for silent removal. Remove it manually via Programs and Features.'
-    }
-    $productCode = $uninstallInfo.PSChildName
-    $uninstallLog = Join-Path $WorkingDirectory 'vmware-tools-uninstall.log'
-    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', "`"$uninstallLog`"") -Wait -PassThru
-    if ($process.ExitCode -notin 0, 3010) {
-        throw "VMware Tools uninstall failed with exit code $($process.ExitCode). See $uninstallLog."
-    }
-    $remainingService = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
-    $remainingUninstallInfo = Get-VMwareToolsUninstallInfo
-    if ($remainingService -or $remainingUninstallInfo) {
-        throw 'VMware Tools uninstall reported success, but the service or registry entry is still present.'
-    }
-    $message = "VMware Tools removed (product code $productCode)."
-    if ($process.ExitCode -eq 3010) { $message += ' A reboot is pending to complete the removal.' }
-    Set-Stage 'vmwareToolsRemoval' 'Succeeded' $message
 }
 
 try {
@@ -197,12 +165,13 @@ try {
     }
     Set-Stage 'verification' 'Succeeded' 'vioscsi service and critical-device entries are present.'
 
-    try {
-        Remove-VMwareTools
-    } catch {
-        # VMware Tools removal is best-effort; a failure here must not mask a successful VirtIO driver install.
-        Set-Stage 'vmwareToolsRemoval' 'Failed' $_.Exception.Message
-        Write-Log "WARNING: VMware Tools removal failed: $($_.Exception.Message)"
+    $vmwareToolsInfo = Get-VMwareToolsUninstallInfo
+    if ($vmwareToolsInfo) {
+        $verificationDetails.vmwareToolsDetected = $true
+        Set-Stage 'vmwareToolsDetection' 'Detected' "VMware Tools is installed (product code $($vmwareToolsInfo.PSChildName)). It will be removed by Export-MigrationState.ps1."
+    } else {
+        $verificationDetails.vmwareToolsDetected = $false
+        Set-Stage 'vmwareToolsDetection' 'NotDetected' 'VMware Tools is not installed.'
     }
 
     Write-Status 'Succeeded' 'VirtIO SCSI driver installed, initialized, and verified.' $verificationDetails

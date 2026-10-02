@@ -1,6 +1,6 @@
 # VirtIO SCSI driver setup
 
-`mig_prep.ps1` downloads and installs the pinned VirtIO guest tools release, downloads the pinned `load-virtio-scsi-on-boot.ps1` commit, initializes the VirtIO SCSI driver, independently verifies the result, and then silently removes VMware Tools if it is installed.
+`mig_prep.ps1` downloads and installs the pinned VirtIO guest tools release, downloads the pinned `load-virtio-scsi-on-boot.ps1` commit, initializes the VirtIO SCSI driver, independently verifies the result, and detects whether VMware Tools is installed (but does not remove it).
 
 ## Run
 
@@ -45,15 +45,11 @@ To place the status and log files elsewhere:
 .\mig_prep.ps1 -StatusPath 'C:\ProgramData\VirtIO\driver-status.json' -LogPath 'C:\ProgramData\VirtIO\driver-install.log'
 ```
 
-## VMware Tools removal
+## VMware Tools handling
 
-After the VirtIO SCSI driver is installed and verified, the script silently removes VMware Tools if it detects it (via the `VMTools` service or its Programs-and-Features registry entry), using its MSI product code with `msiexec /x ... /qn /norestart`. Removal is independently verified afterward. A removal failure is recorded as a `Failed` stage in `driver-status.json` but does not fail the overall run, since the VirtIO driver install already succeeded.
+If VMware Tools is detected during the driver setup, it will be reported in `driver-status.json` as `vmwareToolsDetected`. The script does **not** remove VMware Tools automatically, since doing so would disconnect the network before the migration is complete.
 
-To skip this step and leave VMware Tools in place:
-
-```powershell
-.\mig_prep.ps1 -SkipVMwareToolsRemoval
-```
+VMware Tools should be removed by `Export-MigrationState.ps1` as the final step of the migration workflow, after the system is ready to migrate to the KVM/Proxmox hypervisor.
 
 ## Offline use
 

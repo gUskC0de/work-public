@@ -152,6 +152,46 @@ function Test-Administrator {
     }
 }
 
+function Get-VMwareToolsUninstallInfo {
+    $paths = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object {
+        $displayNameProperty = $_.PSObject.Properties['DisplayName']
+        $displayNameProperty -and $displayNameProperty.Value -eq 'VMware Tools'
+    } | Select-Object -First 1
+}
+
+function Remove-VMwareTools {
+    $service = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
+    $uninstallInfo = Get-VMwareToolsUninstallInfo
+    if (-not $service -and -not $uninstallInfo) {
+        Add-Result 'VMware Tools removal' 'PASS' 'VMware Tools is not installed.'
+        return
+    }
+    if (-not $uninstallInfo -or -not $uninstallInfo.PSChildName) {
+        Add-Result 'VMware Tools removal' 'FAIL' 'VMware Tools appears installed, but its MSI product code could not be determined for silent removal. Remove it manually via Programs and Features.'
+        return
+    }
+    $productCode = $uninstallInfo.PSChildName
+    $uninstallLog = Join-Path $LogDirectory 'vmware-tools-uninstall.log'
+    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', "`"$uninstallLog`"") -Wait -PassThru
+    if ($process.ExitCode -notin 0, 3010) {
+        Add-Result 'VMware Tools removal' 'FAIL' "Uninstall failed with exit code $($process.ExitCode). See $uninstallLog."
+        return
+    }
+    $remainingService = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
+    $remainingUninstallInfo = Get-VMwareToolsUninstallInfo
+    if ($remainingService -or $remainingUninstallInfo) {
+        Add-Result 'VMware Tools removal' 'FAIL' 'Uninstall reported success, but the service or registry entry is still present.'
+        return
+    }
+    $message = "VMware Tools removed (product code $productCode)."
+    if ($process.ExitCode -eq 3010) { $message += ' A reboot is pending to complete the removal.' }
+    Add-Result 'VMware Tools removal' 'PASS' $message
+}
+
 function Get-OpticalMedia {
     $drives = @(Get-CimInstance Win32_CDROMDrive -ErrorAction Stop)
     return @($drives | ForEach-Object {
@@ -473,9 +513,13 @@ try {
     }
     $script:Capture.captureStatus = [ordered]@{ complete = ($warningResults.Count -eq 0); warnings = @($warningResults) }
     Write-CaptureFiles
-    $warningCount = $warningResults.Count
+    
     Write-Log 'Pre-migration state capture completed.' ([ConsoleColor]::Green)
     Write-Log "Output paths: $StateJsonPath, $StateTextPath, $NetworkJsonPath, $RoutePath, $IpConfigPath, $ArpPath, $LogPath" ([ConsoleColor]::Cyan)
+    
+    Remove-VMwareTools
+    
+    $warningCount = $warningResults.Count
     if ($warningCount -gt 0) { Write-Log "Capture completed with $warningCount non-critical warning(s)." ([ConsoleColor]::Yellow); exit 50 }
     exit 0
 } catch {
