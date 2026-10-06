@@ -146,7 +146,7 @@ function Invoke-ReadinessCheck {
     Write-Status "Server type: $serverType" 'INFO'
     Write-Status "Running Test-MigrationReadiness..." 'INFO'
     
-    $testReadinessPath = Join-Path (Split-Path $PSScriptRoot) 'Test-MigrationReadiness.ps1'
+    $testReadinessPath = Join-Path $PSScriptRoot 'Test-MigrationReadiness.ps1'
     if (-not (Test-Path $testReadinessPath)) {
         Write-Status "Error: Test-MigrationReadiness.ps1 not found at $testReadinessPath" 'ERROR'
         return
@@ -162,7 +162,7 @@ function Invoke-ReadinessCheck {
     if ($serverType -eq 'DomainController') {
         Write-Status "Running Test-DCMigrationHealth (pre-migration mode)..." 'INFO'
         
-        $testDCHealthPath = Join-Path (Split-Path $PSScriptRoot) 'Test-DCMigrationHealth.ps1'
+        $testDCHealthPath = Join-Path $PSScriptRoot 'Test-DCMigrationHealth.ps1'
         if (-not (Test-Path $testDCHealthPath)) {
             Write-Status "Error: Test-DCMigrationHealth.ps1 not found at $testDCHealthPath" 'ERROR'
             return
@@ -184,7 +184,7 @@ function Invoke-Prepare {
     
     Write-Status "Running mig_prep (VirtIO driver installation)..." 'INFO'
     
-    $migPrepPath = Join-Path (Split-Path $PSScriptRoot) 'mig_prep.ps1'
+    $migPrepPath = Join-Path $PSScriptRoot 'mig_prep.ps1'
     if (-not (Test-Path $migPrepPath)) {
         Write-Status "Error: mig_prep.ps1 not found at $migPrepPath" 'ERROR'
         return
@@ -199,7 +199,7 @@ function Invoke-Prepare {
     
     Write-Status "Running Export-MigrationState (system state capture)..." 'INFO'
     
-    $exportStatePath = Join-Path (Split-Path $PSScriptRoot) 'Export-MigrationState.ps1'
+    $exportStatePath = Join-Path $PSScriptRoot 'Export-MigrationState.ps1'
     if (-not (Test-Path $exportStatePath)) {
         Write-Status "Error: Export-MigrationState.ps1 not found at $exportStatePath" 'ERROR'
         return
@@ -227,7 +227,7 @@ function Invoke-ValidatePost {
     Write-Status "Server type: $serverType" 'INFO'
     Write-Status "Running Restore-And-TestMigrationState..." 'INFO'
     
-    $restoreStatePath = Join-Path (Split-Path $PSScriptRoot) 'Restore-And-TestMigrationState.ps1'
+    $restoreStatePath = Join-Path $PSScriptRoot 'Restore-And-TestMigrationState.ps1'
     if (-not (Test-Path $restoreStatePath)) {
         Write-Status "Error: Restore-And-TestMigrationState.ps1 not found at $restoreStatePath" 'ERROR'
         return
@@ -243,7 +243,7 @@ function Invoke-ValidatePost {
     if ($serverType -eq 'DomainController') {
         Write-Status "Running Test-DCMigrationHealth (post-migration mode)..." 'INFO'
         
-        $testDCHealthPath = Join-Path (Split-Path $PSScriptRoot) 'Test-DCMigrationHealth.ps1'
+        $testDCHealthPath = Join-Path $PSScriptRoot 'Test-DCMigrationHealth.ps1'
         if (-not (Test-Path $testDCHealthPath)) {
             Write-Status "Error: Test-DCMigrationHealth.ps1 not found at $testDCHealthPath" 'ERROR'
             return
