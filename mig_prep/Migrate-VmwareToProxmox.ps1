@@ -179,6 +179,34 @@ function Invoke-ReadinessCheck {
     Write-Status "ReadinessCheck phase completed." 'SUCCESS'
 }
 
+function Get-LatestStatePath {
+    <#
+    .SYNOPSIS
+        Finds the most recent Export-MigrationState directory for today and returns the State subdirectory path.
+    #>
+    $datestamp = (Get-Date).ToString('yyyy-MM-dd')
+    $migrationBase = "C:\Rutin_migration_$datestamp"
+    
+    if (-not (Test-Path $migrationBase)) {
+        return $null
+    }
+    
+    $exportDirs = @(Get-ChildItem -Path $migrationBase -Directory -Filter 'Export-MigrationState*' -ErrorAction SilentlyContinue)
+    if ($exportDirs.Count -eq 0) {
+        return $null
+    }
+    
+    # Sort by name (includes timestamp suffix if multiple runs); get the latest
+    $latest = $exportDirs | Sort-Object Name -Descending | Select-Object -First 1
+    $statePath = Join-Path $latest.FullName 'State'
+    
+    if (Test-Path $statePath -PathType Container) {
+        return $statePath
+    }
+    
+    return $null
+}
+
 function Invoke-Prepare {
     Write-Status "Starting Prepare phase..." 'INFO'
     
@@ -210,6 +238,35 @@ function Invoke-Prepare {
         Write-Status "Export-MigrationState completed with warnings or errors." 'WARNING'
     } else {
         Write-Status "Export-MigrationState completed successfully." 'SUCCESS'
+    }
+    
+    # Optional: Prompt to create startup task for automated network restoration
+    Write-Host "`n"
+    $taskResponse = Read-Host "Would you like to create an automated startup task to restore network settings after migration? (Y/N)"
+    
+    if ($taskResponse -match '^[Yy]') {
+        Write-Status "Attempting to create startup restoration task..." 'INFO'
+        
+        $createTaskPath = Join-Path $PSScriptRoot 'Create-RestoreStartupTask.ps1'
+        if (-not (Test-Path $createTaskPath)) {
+            Write-Status "Error: Create-RestoreStartupTask.ps1 not found at $createTaskPath" 'WARNING'
+        } else {
+            $stateDir = Get-LatestStatePath
+            if (-not $stateDir) {
+                Write-Status "Error: Could not locate the captured state directory. Task creation skipped." 'WARNING'
+            } else {
+                $restoreScriptPath = Join-Path $PSScriptRoot 'Restore-And-TestMigrationState.ps1'
+                
+                & $createTaskPath -RestoreScriptPath $restoreScriptPath -StateDirectory $stateDir
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Status "Startup restoration task created successfully." 'SUCCESS'
+                } else {
+                    Write-Status "Startup restoration task creation completed with errors." 'WARNING'
+                }
+            }
+        }
+    } else {
+        Write-Status "Startup restoration task creation skipped." 'INFO'
     }
     
     Write-Status "Prepare phase completed." 'SUCCESS'
