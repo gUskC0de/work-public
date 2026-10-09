@@ -29,13 +29,11 @@
     Description for the scheduled task. Default: 'Restores network settings after Proxmox migration'.
 
 .EXAMPLE
-    .\Create-RestoreStartupTask.ps1 `
-        -RestoreScriptPath 'C:\Rutin_migration_2026-10-08\Restore-And-TestMigrationState\Restore-And-TestMigrationState.ps1' `
-        -StateDirectory 'C:\Rutin_migration_2026-10-08\Export-MigrationState\State'
+    .\Create-RestoreStartupTask.ps1 -StateDirectory 'C:\Rutin_migration_2026-10-08\Export-MigrationState\State'
+    # Automatically uses Restore-And-TestMigrationState.ps1 from the same folder
 
 .EXAMPLE
     .\Create-RestoreStartupTask.ps1 `
-        -RestoreScriptPath 'C:\path\to\Restore-And-TestMigrationState.ps1' `
         -StateDirectory 'C:\path\to\state' `
         -TaskName 'My Custom Task Name'
 
@@ -43,12 +41,13 @@
     Supported targets: Windows Server 2016, 2019, 2022, and 2025; PowerShell 5.1+.
     Requires administrator privileges.
     Task runs with SYSTEM account (no user credentials required).
+    Restore-And-TestMigrationState.ps1 must be in the same folder as this script.
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidateScript({ Test-Path $_ -PathType Leaf })]
-    [string]$RestoreScriptPath,
+    [Parameter(Mandatory = $false)]
+    [ValidateScript({ if ($_) { Test-Path $_ -PathType Leaf } else { $true } })]
+    [string]$RestoreScriptPath = '',
 
     [Parameter(Mandatory = $true)]
     [ValidateScript({ Test-Path $_ -PathType Container })]
@@ -60,6 +59,15 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+# Resolve RestoreScriptPath to be in the same folder as this script if not provided
+if (-not $RestoreScriptPath) {
+    $RestoreScriptPath = Join-Path $PSScriptRoot 'Restore-And-TestMigrationState.ps1'
+    if (-not (Test-Path $RestoreScriptPath -PathType Leaf)) {
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] ERROR: Restore-And-TestMigrationState.ps1 not found in $PSScriptRoot" -ForegroundColor Red
+        exit 1
+    }
+}
 
 function Test-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -97,18 +105,22 @@ function New-ScheduledTaskAction-RestoreNetwork {
     #>
     param([string]$ScriptPath, [string]$StateDir)
     
-    $arguments = @(
-        '-NoProfile',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', "`"$ScriptPath`"",
-        '-Mode', 'ApplyNetwork',
-        '-StateDirectory', "`"$StateDir`""
-    ) -join ' '
+    # Build arguments with proper escaping for scheduled task execution
+    $scriptPathEscaped = $ScriptPath -replace '"', '\"'
+    $stateDirEscaped = $StateDir -replace '"', '\"'
+    
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"& {try { & '$scriptPathEscaped' -Mode ApplyNetwork -StateDirectory '$stateDirEscaped' } catch { Write-Host `"Error: `$(`$_.Exception.Message)`" -ForegroundColor Red; exit 1 }}; if (`$LASTEXITCODE -eq 0) { Write-Host 'Success'; exit 0 } else { Write-Host 'Task will retry'; exit 1 }`""
+    
+    $workingDir = Split-Path $ScriptPath -Parent
+    if (-not (Test-Path $workingDir)) {
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] WARNING: Working directory does not exist, using C:\temp instead" -ForegroundColor Yellow
+        $workingDir = "C:\temp"
+    }
     
     $action = New-ScheduledTaskAction `
         -Execute 'powershell.exe' `
         -Argument $arguments `
-        -WorkingDirectory (Split-Path $ScriptPath -Parent)
+        -WorkingDirectory $workingDir
     
     return $action
 }
@@ -168,7 +180,7 @@ try {
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Task Path: $($task.TaskPath)" -ForegroundColor Gray
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Principal: $($principal.UserId) (RunLevel: $($principal.RunLevel))" -ForegroundColor Gray
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Triggers: At Startup + Every 5 minutes for 2 hours" -ForegroundColor Gray
-    Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Script: $RestoreScriptPath" -ForegroundColor Gray
+    Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Restore Script: $RestoreScriptPath" -ForegroundColor Gray
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] State Directory: $StateDirectory" -ForegroundColor Gray
     
     Write-Host "`nTask will execute at startup and retry every 5 minutes for 2 hours until network is successfully restored." -ForegroundColor Cyan
