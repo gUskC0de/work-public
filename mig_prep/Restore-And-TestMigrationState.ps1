@@ -335,6 +335,10 @@ function Restore-AdapterNetwork {
     $target = $Mapping.target.adapter
     $source = $Mapping.source
     try {
+        # Ensure the adapter is enabled before applying configuration
+        Enable-NetAdapter -Name $target.interfaceAlias -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+        Start-Sleep -Milliseconds 500  # Allow adapter time to come up
+        
         if ($source.dhcpEnabled) {
             Set-NetIPInterface -InterfaceIndex $target.interfaceIndex -Dhcp Enabled -Confirm:$false
             if (@($source.dnsServers).Count -gt 0) { Set-DnsClientServerAddress -InterfaceIndex $target.interfaceIndex -ServerAddresses @($source.dnsServers) -Confirm:$false }
