@@ -135,22 +135,28 @@ try {
     }
     
     # Create task components
-    $trigger = New-ScheduledTaskTrigger-AtStartup
+    # Primary trigger: at system startup
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    # Additional trigger: every 5 minutes for 2 hours after startup to handle adapter initialization delays
+    $retryTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Hours 2)
+    
     $principal = New-ScheduledTaskPrincipal-System
     $action = New-ScheduledTaskAction-RestoreNetwork -ScriptPath $RestoreScriptPath -StateDir $StateDirectory
     
-    # Create task settings
+    # Create task settings with retry behavior
     $settings = New-ScheduledTaskSettingsSet `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
         -StartWhenAvailable `
-        -RunOnlyIfNetworkAvailable:$false
+        -RunOnlyIfNetworkAvailable:$false `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
     
-    # Register the task
+    # Register the task with multiple triggers
     $task = Register-ScheduledTask `
         -TaskName $TaskName `
         -TaskPath '\' `
-        -Trigger $trigger `
+        -Trigger @($trigger, $retryTrigger) `
         -Action $action `
         -Principal $principal `
         -Settings $settings `
@@ -161,11 +167,12 @@ try {
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Task Name: $($task.TaskName)" -ForegroundColor Gray
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Task Path: $($task.TaskPath)" -ForegroundColor Gray
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Principal: $($principal.UserId) (RunLevel: $($principal.RunLevel))" -ForegroundColor Gray
-    Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Trigger: At Startup" -ForegroundColor Gray
+    Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Triggers: At Startup + Every 5 minutes for 2 hours" -ForegroundColor Gray
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Script: $RestoreScriptPath" -ForegroundColor Gray
     Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] State Directory: $StateDirectory" -ForegroundColor Gray
     
-    Write-Host "`nTask will execute at next system startup and automatically disable after successful network restoration." -ForegroundColor Cyan
+    Write-Host "`nTask will execute at startup and retry every 5 minutes for 2 hours until network is successfully restored." -ForegroundColor Cyan
+    Write-Host "Check logs at: C:\Rutin_migration_<date>\Restore-And-TestMigrationState\Logs\PostMigrationValidation.log" -ForegroundColor Cyan
     exit 0
 }
 catch {
