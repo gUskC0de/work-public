@@ -551,9 +551,66 @@ function Test-Connectivity {
     $details += $portFailures
     if ($dnsSuccess -and ($gatewaySuccess -or $gateways.Count -eq 0) -and $domainDiscoverySuccess -and $portFailures.Count -eq 0) { Add-Result 'Connectivity' 'PASS' 'DNS and available gateway, domain, and configured application-port checks succeeded.' $details } else { Add-Result 'Connectivity' 'WARNING' 'Connectivity requires review; ICMP failure alone is not treated as conclusive.' $details }
 }
+function Remove-VMwareToolsUninstall {
+    <#
+    .SYNOPSIS
+        Uninstalls VMware Tools after successful network restoration and validation.
+    #>
+    $service = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
+    
+    if (-not $service) {
+        Add-Result 'VMware Tools uninstall' 'PASS' 'VMware Tools is not installed.'
+        return
+    }
+    
+    # Get the uninstall info from registry
+    $uninstallInfo = @(
+        Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue,
+        Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
+    ) | Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq 'VMware Tools' } | Select-Object -First 1
+    
+    if (-not $uninstallInfo -or -not $uninstallInfo.PSChildName) {
+        Add-Result 'VMware Tools uninstall' 'WARNING' 'VMware Tools service is present, but MSI product code could not be found. Manual uninstall via Programs and Features may be required.'
+        return
+    }
+    
+    try {
+        # Ensure service is stopped
+        if ($service.Status -eq 'Running') {
+            Stop-Service -Name 'VMTools' -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+        }
+        
+        $productCode = $uninstallInfo.PSChildName
+        $uninstallLog = Join-Path (Split-Path $LogPath) 'vmware-tools-uninstall.log'
+        
+        Write-Log "Uninstalling VMware Tools (Product Code: $productCode)..." ([ConsoleColor]::Cyan)
+        
+        $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', "`\"$uninstallLog`\"")
+        
+        if ($process.ExitCode -notin 0, 3010) {
+            Add-Result 'VMware Tools uninstall' 'FAIL' "Uninstall failed with exit code $($process.ExitCode). See log at $uninstallLog"
+            return
+        }
+        
+        # Verify uninstall
+        Start-Sleep -Milliseconds 500
+        $remainingService = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
+        if ($remainingService) {
+            Add-Result 'VMware Tools uninstall' 'FAIL' 'Uninstall reported success, but the VMTools service still exists.'
+            return
+        }
+        
+        $message = "VMware Tools successfully uninstalled (Product Code: $productCode)."
+        if ($process.ExitCode -eq 3010) { $message += ' A reboot will be required to complete the removal.' }
+        Add-Result 'VMware Tools uninstall' 'PASS' $message
+    } catch {
+        Add-Result 'VMware Tools uninstall' 'FAIL' "Uninstall error: $($_.Exception.Message)"
+    }
+}
+
 function Test-QemuAgentAndVMwareTools {
     $agent = Get-Service -Name 'QEMU-GA', 'qemu-ga' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($agent -and $agent.Status -eq 'Running') { Add-Result 'QEMU Guest Agent' 'PASS' 'QEMU Guest Agent is installed and running.' } else { Add-Result 'QEMU Guest Agent' 'WARNING' 'QEMU Guest Agent is missing or stopped.' }
-    $vmware = Get-Service -Name VMTools -ErrorAction SilentlyContinue; if ($vmware) { Add-Result 'VMware Tools cleanup' 'WARNING' 'VMware Tools remains installed; remove it only as a separate deliberate engineering action.' } else { Add-Result 'VMware Tools cleanup' 'PASS' 'VMware Tools service is not installed.' }
 }
 function Restore-Network {
     param($Mapping)
@@ -612,6 +669,7 @@ try {
     $postState = Get-PostMigrationState
     $postState | ConvertTo-Json -Depth 12 | Set-Content -Path $PostStatePath -Encoding UTF8
     Compare-SystemState; Compare-NetworkState; Compare-DiskState; Compare-Services; Compare-Collections; Test-FilesystemAndEvents; Test-Connectivity; Test-QemuAgentAndVMwareTools
+    if ($Mode -eq 'Full') { Remove-VMwareToolsUninstall }
     $summary = Write-Reports
     Write-Log "Overall result: $($summary.overallStatus)" (Get-StateColor $summary.overallStatus)
     if ($summary.overallStatus -eq 'FAIL') { exit 2 }; if ($summary.overallStatus -eq 'WARNING') { exit 1 }; exit 0

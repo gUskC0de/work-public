@@ -537,7 +537,7 @@ try {
     Write-Log 'Pre-migration state capture completed.' ([ConsoleColor]::Green)
     Write-Log "Output paths: $StateJsonPath, $StateTextPath, $NetworkJsonPath, $RoutePath, $IpConfigPath, $ArpPath, $LogPath" ([ConsoleColor]::Cyan)
     
-    Remove-VMwareTools
+    Disable-VMwareToolsServices
     
     $warningCount = $warningResults.Count
     if ($warningCount -gt 0) { Write-Log "Capture completed with $warningCount non-critical warning(s)." ([ConsoleColor]::Yellow); exit 50 }
