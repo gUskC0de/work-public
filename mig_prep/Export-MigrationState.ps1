@@ -454,7 +454,16 @@ function Get-EventBaseline {
 
 function Get-NetworkCapture {
     $adapters = @(Get-ActiveAdapters)
-    return [ordered]@{ schemaVersion = $SchemaVersion; capturedAtUtc = [DateTime]::UtcNow.ToString('o'); activeAdapterCount = $adapters.Count; activeAdapters = $adapters; ipv4Routes = @(Get-StructuredRoutes); rawOutputFiles = @($IpConfigPath, $RoutePath, $ArpPath) }
+    $requiresManualHandling = $adapters.Count -ne 1
+    return [ordered]@{ 
+        schemaVersion = $SchemaVersion
+        capturedAtUtc = [DateTime]::UtcNow.ToString('o')
+        requiresManualNetworkHandling = $requiresManualHandling
+        activeAdapterCount = $adapters.Count
+        activeAdapters = $adapters
+        ipv4Routes = @(Get-StructuredRoutes)
+        rawOutputFiles = @($IpConfigPath, $RoutePath, $ArpPath)
+    }
 }
 
 function Write-TextReport {
@@ -484,14 +493,15 @@ try {
     $activeAdapters = @(Get-ActiveAdapters)
     if ($activeAdapters.Count -gt 1) {
         $details = @($activeAdapters | ForEach-Object { "Name=$($_.adapterName), Description=$($_.interfaceDescription), IfIndex=$($_.interfaceIndex), MAC=$($_.macAddress), IP=$((@($_.ipv4Addresses | ForEach-Object address)) -join ', '), Gateway=$($_.defaultGateways -join ', ')" })
-        Add-Result 'Active network adapter' 'FAIL' "$($activeAdapters.Count) active adapters detected. Manual network handling is required; automatic capture stopped." $details
-        exit 30
+        Add-Result 'Active network adapters' 'WARNING' "$($activeAdapters.Count) active adapters detected. All adapters will be exported; however, automatic network restoration will only apply the first active adapter. Manual network configuration will be required for additional adapters." $details
     }
-    if ($activeAdapters.Count -eq 0) {
+    elseif ($activeAdapters.Count -eq 0) {
         Add-Result 'Active network adapter' 'FAIL' 'No active network adapter detected; automatic capture stopped.'
         exit 40
     }
-    Add-Result 'Active network adapter' 'PASS' "Exactly one active adapter detected: $($activeAdapters[0].interfaceAlias)." @("$($activeAdapters[0].interfaceDescription), MAC=$($activeAdapters[0].macAddress), IfIndex=$($activeAdapters[0].interfaceIndex)", "Note: after migration to Proxmox, this NIC is expected to be re-detected as a VirtIO adapter (e.g. 'Red Hat VirtIO Ethernet Adapter') with the same MAC address; the restore script matches it by driver signature, not by adapter name.")
+    else {
+        Add-Result 'Active network adapter' 'PASS' "Exactly one active adapter detected: $($activeAdapters[0].interfaceAlias)." @("$($activeAdapters[0].interfaceDescription), MAC=$($activeAdapters[0].macAddress), IfIndex=$($activeAdapters[0].interfaceIndex)", "Note: after migration to Proxmox, this NIC is expected to be re-detected as a VirtIO adapter (e.g. 'Red Hat VirtIO Ethernet Adapter') with the same MAC address; the restore script matches it by driver signature, not by adapter name.")
+    }
     if ($ValidateOnly) { Write-Log 'ValidateOnly completed; no complete capture files were written.' ([ConsoleColor]::Cyan); exit 0 }
 
     $os = Get-CimInstance Win32_OperatingSystem

@@ -176,19 +176,28 @@ Captures network and system state before migration. Called during Prepare phase.
 .\Export-MigrationState.ps1
 ```
 
+**Handling of multiple network adapters:**
+- All active adapters are captured and exported, regardless of count
+- If multiple adapters detected, a WARNING is logged (not a failure)
+- Script completes successfully; you have all adapter configuration data
+- Restore script will apply the first adapter automatically
+- Additional adapters require manual configuration using the exported data
+
 **Outputs to:**
 ```
 C:\Rutin_migration_YYYY-MM-DD\
 ├── Export-MigrationState\
 │   ├── State\
 │   │   ├── PreMigrationState.json      (System info, disks)
-│   │   ├── NetworkConfiguration.json   (Adapters, IP, DNS, routes)
+│   │   ├── NetworkConfiguration.json   (All adapters, IP, DNS, routes)
 │   │   └── [other captured data]
 │   └── Logs\
 │       └── CaptureData.log
 ```
 
-**Key action:** Disables VMware Tools services (keeps software for rollback)
+**Key actions:** 
+- Disables VMware Tools services (keeps software for rollback)
+- Exports all network adapter information for reference
 
 ---
 
@@ -206,6 +215,25 @@ Restores network config and validates migration success. Called during ValidateP
 - `ApplyNetwork` – Restore network only
 - `CompareOnly` – Compare source vs. target state
 - `Full` – Apply network + full validation + uninstall VMware Tools (DEFAULT in orchestration)
+
+**Network restoration behavior:**
+- **Single active adapter (automatic):** Restores IP, DNS, gateway, and routes to VirtIO adapter
+- **Multiple active adapters (mixed):**
+  - Automatic restoration applies first adapter configuration only
+  - Generates detailed report with all available adapters
+  - Manual intervention required to configure additional adapters
+  - Use the exported NetworkConfiguration.json for reference
+
+**Example manual configuration for additional adapters:**
+```powershell
+# Get all exported adapters
+$networkConfig = Get-Content 'C:\Rutin_migration_2026-10-10\Export-MigrationState\State\NetworkConfiguration.json' | ConvertFrom-Json
+
+# Apply second adapter configuration manually
+$secondAdapter = $networkConfig.activeAdapters[1]
+Get-NetAdapter -Name $secondAdapter.adapterName | New-NetIPAddress -IPAddress $secondAdapter.ipv4Addresses[0].address -PrefixLength $secondAdapter.ipv4Addresses[0].prefixLength
+Get-DnsClientServerAddress -InterfaceAlias $secondAdapter.adapterName -AddressFamily IPv4 | Set-DnsClientServerAddress -ServerAddresses $secondAdapter.dnsServers
+```
 
 **Outputs to:**
 ```
@@ -255,19 +283,38 @@ Domain Controller-specific health checks. Optional for DC migrations.
 
 ## Network Adapter Mapping
 
-The restore script automatically maps the source VM's active NIC to the Proxmox VM's VirtIO adapter:
+The restore script automatically maps the source VM's active NIC(s) to the Proxmox VM's VirtIO adapter:
 
-1. **Detects** single active network adapter from source state
-2. **Identifies** VirtIO adapter on target VM (checks MAC, adapter name patterns)
-3. **Applies** IP, DNS, gateway settings to VirtIO adapter
-4. **Enables** network adapter (if disabled)
-5. **Restores** static routes and ARP entries
+1. **Detects** all active network adapters from source state
+2. **Single NIC case (automatic):**
+   - Identifies VirtIO adapter on target VM (checks MAC, adapter name patterns)
+   - Applies IP, DNS, gateway settings to VirtIO adapter
+   - Enables network adapter (if disabled)
+   - Restores static routes and ARP entries
+3. **Multiple NIC case (manual):**
+   - Exports all adapter configurations to `NetworkConfiguration.json`
+   - Sets `requiresManualNetworkHandling: true` flag in output
+   - Automatic restoration applies the first active adapter
+   - You must manually configure additional adapters using the exported configuration data
+   - All adapter details are available for reference in the state files
 
-If multiple adapters were active on source, manual validation and mapping may be required.
+**Exported data for multiple NICs includes:**
+- Adapter names, descriptions, and hardware addresses (MAC)
+- IPv4 addresses, subnet masks, and gateway settings
+- DNS server addresses and suffixes
+- Static routes and metrics
+- VLAN information (if configured)
+- Network profiles and connectivity status
 
 ---
 
 ## Troubleshooting
+
+### Multiple Network Adapters Detected
+1. Check the capture log: `C:\Rutin_migration_YYYY-MM-DD\Export-MigrationState\Logs\CaptureData.log`
+2. Review all captured adapter configurations: `NetworkConfiguration.json`
+3. After restore, verify first adapter restored correctly: `Get-NetIPConfiguration`
+4. Manually apply remaining adapter configurations using the exported configuration data (see Restore script reference)
 
 ### Network Not Active After Restore
 1. Check logs: `C:\Rutin_migration_YYYY-MM-DD\Restore-And-TestMigrationState\Logs\PostMigrationValidation.log`

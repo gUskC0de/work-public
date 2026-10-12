@@ -244,6 +244,17 @@ function Find-VirtIOAdapters {
     }
     return @($records)
 }
+function Report-ManualNetworkHandling {
+    $requiresManual = $script:PreNetwork.requiresManualNetworkHandling
+    if ($requiresManual) {
+        $adapterCount = @($script:PreNetwork.activeAdapters).Count
+        $adapterDetails = @($script:PreNetwork.activeAdapters | ForEach-Object { "- $($_.adapterName) ($($_.interfaceDescription)): IP=$((@($_.ipv4Addresses | ForEach-Object address)) -join ', '), Gateway=$($_.defaultGateways -join ', ')" })
+        Add-Result 'Manual network handling' 'WARNING' "Multiple active adapters ($adapterCount) were detected at capture time. Automatic restoration will only apply the first adapter. Review all captured adapters and apply remaining network configuration manually." $adapterDetails
+    } else {
+        Add-Result 'Manual network handling' 'INFO' "Single active adapter detected at capture time. Automatic restoration will apply network configuration."
+    }
+}
+
 function Resolve-AdapterMapping {
     if (-not $script:PreNetwork -or -not $script:PreNetwork.activeAdapters) {
         Add-Result 'Adapter mapping' 'FAIL' 'The pre-migration network capture is missing or incomplete; no adapter mapping can be created.'
@@ -661,6 +672,7 @@ try {
     if (-not (Test-CaptureCompleteness)) { $null = Write-Reports; exit 20 }
     if (-not (Test-ComputerIdentity)) { $null = Write-Reports; exit 20 }
     Invoke-SafePart 'Disk online state' { Repair-OfflineDisks }
+    Report-ManualNetworkHandling
     $mapping = Resolve-AdapterMapping
     if (-not $mapping) { $null = Write-Reports; exit 30 }
     if ($Mode -eq 'ValidateOnly') { Add-Result 'Mode' 'PASS' 'Validation-only mode selected; no network changes were requested.' }
