@@ -91,7 +91,7 @@ if (-not $StateDirectory) {
     if (Test-Path $exportPath) {
         $StateDirectory = $exportPath
     } else {
-        $StateDirectory = 'C:\Rutin_migration_$((Get-Date).ToString("yyyy-MM-dd"))\Export-MigrationState\State'
+        $StateDirectory = "C:\Rutin_migration_$((Get-Date).ToString('yyyy-MM-dd'))\Export-MigrationState\State"
     }
 }
 
