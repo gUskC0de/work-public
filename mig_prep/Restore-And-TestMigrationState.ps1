@@ -483,11 +483,21 @@ function Compare-NetworkState {
     $before = @($script:PreNetwork.activeAdapters | ForEach-Object { $_.ipv4Addresses.address })
     $after = @($script:CurrentNetwork.activeAdapters | ForEach-Object { $_.ipv4Addresses.address })
     Compare-Values 'IPv4 addresses' $before $after
-    Compare-Values 'Default gateways' (@($script:PreNetwork.activeAdapters | ForEach-Object defaultGateways)) (@($script:CurrentNetwork.activeAdapters | ForEach-Object defaultGateways))
-    Compare-Values 'DNS servers' (@($script:PreNetwork.activeAdapters | ForEach-Object dnsServers)) (@($script:CurrentNetwork.activeAdapters | ForEach-Object dnsServers))
-    Compare-Values 'Adapter hardware identity' (@($script:PreNetwork.activeAdapters | ForEach-Object { $_.macAddress })) (@($script:CurrentNetwork.activeAdapters | ForEach-Object { $_.macAddress })) $true
-    Compare-Values 'Adapter description/vendor' (@($script:PreNetwork.activeAdapters | ForEach-Object { $_.interfaceDescription })) (@($script:CurrentNetwork.activeAdapters | ForEach-Object { $_.interfaceDescription })) $true
-    Compare-Values 'Static routes' (@($script:PreNetwork.ipv4Routes | Where-Object { -not $_.isConnectedRoute -and -not $_.isDefaultRoute } | ForEach-Object { "$($_.destinationPrefix)|$($_.nextHop)" })) (@($script:CurrentNetwork.ipv4Routes | Where-Object { -not $_.isConnectedRoute -and -not $_.isDefaultRoute } | ForEach-Object { "$($_.destinationPrefix)|$($_.nextHop)" }))
+    $gateways_before = @($script:PreNetwork.activeAdapters | ForEach-Object defaultGateways)
+    $gateways_after = @($script:CurrentNetwork.activeAdapters | ForEach-Object defaultGateways)
+    Compare-Values 'Default gateways' $gateways_before $gateways_after
+    $dns_before = @($script:PreNetwork.activeAdapters | ForEach-Object dnsServers)
+    $dns_after = @($script:CurrentNetwork.activeAdapters | ForEach-Object dnsServers)
+    Compare-Values 'DNS servers' $dns_before $dns_after
+    $mac_before = @($script:PreNetwork.activeAdapters | ForEach-Object { $_.macAddress })
+    $mac_after = @($script:CurrentNetwork.activeAdapters | ForEach-Object { $_.macAddress })
+    Compare-Values 'Adapter hardware identity' $mac_before $mac_after $true
+    $desc_before = @($script:PreNetwork.activeAdapters | ForEach-Object { $_.interfaceDescription })
+    $desc_after = @($script:CurrentNetwork.activeAdapters | ForEach-Object { $_.interfaceDescription })
+    Compare-Values 'Adapter description/vendor' $desc_before $desc_after $true
+    $routes_before = @($script:PreNetwork.ipv4Routes | Where-Object { -not $_.isConnectedRoute -and -not $_.isDefaultRoute } | ForEach-Object { "$($_.destinationPrefix)|$($_.nextHop)" })
+    $routes_after = @($script:CurrentNetwork.ipv4Routes | Where-Object { -not $_.isConnectedRoute -and -not $_.isDefaultRoute } | ForEach-Object { "$($_.destinationPrefix)|$($_.nextHop)" })
+    Compare-Values 'Static routes' $routes_before $routes_after
 }
 function Compare-DiskState {
     $current = @(Get-Disk -ErrorAction Stop); $before = @($script:PreState.disks)
