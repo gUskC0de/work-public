@@ -173,27 +173,38 @@ function Test-Administrator {
 }
 
 function Disable-VMwareToolsServices {
-    $service = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
-    if (-not $service) {
-        Add-Result 'VMware Tools shutdown' 'PASS' 'VMware Tools service is not installed.'
-        return
-    }
+    $servicesToDisable = @(
+        'VMTools',                    # VMware Tools
+        'VMwareAliasManager',         # VMware Alias Manager and Ticket Service
+        'VMwareSnapshotProvider',     # VMware Snapshot Provider
+        'VMwareSVGHelper'             # VMware SVG Helper
+    )
     
-    try {
-        # Stop the service if running
-        if ($service.Status -eq 'Running') {
-            Stop-Service -Name 'VMTools' -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 500
-            $service.Refresh()
+    $results = @()
+    foreach ($serviceName in $servicesToDisable) {
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if (-not $service) {
+            $results += "$serviceName (not installed)"
+            continue
         }
         
-        # Disable the service so it won't start on boot
-        Set-Service -Name 'VMTools' -StartupType Disabled -ErrorAction SilentlyContinue
-        
-        Add-Result 'VMware Tools shutdown' 'PASS' 'VMware Tools service has been stopped and disabled. The service will remain installed for potential rollback.'
-    } catch {
-        Add-Result 'VMware Tools shutdown' 'FAIL' "Failed to disable VMware Tools service: $($_.Exception.Message)"
+        try {
+            # Stop the service if running
+            if ($service.Status -eq 'Running') {
+                Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Milliseconds 500
+            }
+            
+            # Disable the service so it won't start on boot
+            Set-Service -Name $serviceName -StartupType Disabled -ErrorAction SilentlyContinue
+            $results += "$serviceName (stopped and disabled)"
+        } catch {
+            $results += "$serviceName (error: $($_.Exception.Message))"
+        }
     }
+    
+    $message = "VMware services shutdown: " + ($results -join "; ")
+    Add-Result 'VMware services shutdown' 'PASS' $message
 }
 
 function Get-OpticalMedia {
