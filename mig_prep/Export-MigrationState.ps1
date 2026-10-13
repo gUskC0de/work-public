@@ -174,10 +174,10 @@ function Test-Administrator {
 
 function Disable-VMwareToolsServices {
     $servicesToDisable = @(
-        'VMTools',                    # VMware Tools
-        'VMwareAliasManager',         # VMware Alias Manager and Ticket Service
-        'VMwareSnapshotProvider',     # VMware Snapshot Provider
-        'VMwareSVGHelper'             # VMware SVG Helper
+        'VMTools',      # VMware Tools
+        'VGAuthService', # VMware Guest Authentication Service
+        'VMVss',        # VMware VSS Writer
+        'VM3DService'   # VMware 3D Graphics Service
     )
     
     $results = @()
