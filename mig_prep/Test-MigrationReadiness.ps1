@@ -261,8 +261,8 @@ function Test-VMwareTools {
             elseif ($productVersionProperty -and $productVersionProperty.Value) { $version = $productVersionProperty.Value }
         }
         if (-not $service -and -not $app) { Add-CheckResult 'VMware Tools' 'PASS' 'VMware Tools is not installed.' | Out-Null }
-        elseif (-not $service) { Add-CheckResult 'VMware Tools' 'INFO' "VMware Tools registry data present. Service enabled state will be checked. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
-        elseif ($service.StartType -eq 'Running' -or $service.StartType -eq 'Automatic') { Add-CheckResult 'VMware Tools' 'INFO' "VMware Tools is installed and enabled (status: $($service.Status), StartType: $($service.StartType)). It will be disabled before migration and uninstalled after. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
+        elseif (-not $service) { Add-CheckResult 'VMware Tools' 'WARNING' "VMware Tools registry data present. Service enabled state will be checked. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
+        elseif ($service.StartType -eq 'Running' -or $service.StartType -eq 'Automatic') { Add-CheckResult 'VMware Tools' 'WARNING' "VMware Tools is installed and enabled (status: $($service.Status), StartType: $($service.StartType)). It will be disabled before migration and uninstalled after. Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
         else { Add-CheckResult 'VMware Tools' 'PASS' "VMware Tools is installed but disabled (service status: $($service.Status), StartType: $($service.StartType)). Version: $(if ($version) {$version} else {'not available'})." | Out-Null }
     }
 }
