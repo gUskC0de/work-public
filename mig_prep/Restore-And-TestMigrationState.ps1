@@ -495,7 +495,10 @@ function Compare-DiskState {
     $details = @()
     foreach ($old in $before) { $size = @($current | Where-Object { [math]::Abs($_.Size - $old.sizeBytes) -lt 1GB } | Select-Object -First 1); if ($size) { $details += "Matched disk size $([math]::Round($old.sizeBytes / 1GB, 2)) GB." } else { $details += "No current disk matched expected size $([math]::Round($old.sizeBytes / 1GB, 2)) GB." } }
     if ($details -match 'No current') { Add-Result 'Disk sizes' 'FAIL' 'One or more expected disk sizes were not found.' $details } else { Add-Result 'Disk sizes' 'PASS' 'Expected disk sizes were found.' $details }
-    Compare-Values 'Partition and volume layout' (@($script:PreState.partitionsAndVolumes | Where-Object { $_.driveLetter } | ForEach-Object { "$($_.driveLetter)|$($_.volumeLabel)|$($_.fileSystem)|$($_.mountPoints -join ',')" })) (@(Get-PartitionVolumeStateForComparison | Where-Object { $_ -match '^[A-Z]\|' }))
+    # Filter partition/volume layouts to user-accessible volumes only (those with drive letters)
+    $expectedPartitions = @($script:PreState.partitionsAndVolumes | Where-Object { $_.driveLetter } | ForEach-Object { "$($_.driveLetter)|$($_.volumeLabel)|$($_.fileSystem)|$($_.mountPoints -join ',')" })
+    $actualPartitions = @(Get-PartitionVolumeStateForComparison | Where-Object { $_ -match '^[A-Z]\|' })
+    Compare-Values 'Partition and volume layout' $expectedPartitions $actualPartitions
 }
 function Get-PartitionVolumeStateForComparison {
     # $volume is $null for partitions with no accessible volume (e.g. Recovery, EFI, MSR).
@@ -602,9 +605,9 @@ function Test-FilesystemAndEvents {
             Write-Host "Running online scan on $drive (this may take a few minutes)..." -ForegroundColor Cyan
             $scanOutput = (& chkdsk $drive /scan 2>&1) -join ' '
             if ($LASTEXITCODE -eq 0) {
-                $scanResults += "$drive: Online scan completed successfully."
+                $scanResults += "$($drive): Online scan completed successfully."
             } else {
-                $scanResults += "$drive: Scan reported issues (code: $LASTEXITCODE). $scanOutput"
+                $scanResults += "$($drive): Scan reported issues (code: $($LASTEXITCODE)). $scanOutput"
             }
         }
         if ($scanResults) {

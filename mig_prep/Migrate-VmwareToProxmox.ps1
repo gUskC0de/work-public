@@ -11,6 +11,10 @@
     Optional: Specify phase directly (ReadinessCheck, Prepare, ValidatePost).
     If not provided, displays interactive menu.
 
+.PARAMETER DeepScan
+    Optional: When used with ValidatePost phase, runs online chkdsk /scan on all NTFS volumes
+    for thorough filesystem validation (may take several minutes). Default is off.
+
 .EXAMPLE
     .\Migrate-VmwareToProxmox.ps1
     # Interactive menu displayed
@@ -24,6 +28,9 @@
 .EXAMPLE
     .\Migrate-VmwareToProxmox.ps1 -Phase ValidatePost
 
+.EXAMPLE
+    .\Migrate-VmwareToProxmox.ps1 -Phase ValidatePost -DeepScan
+
 .NOTES
     Supported targets: Windows Server 2016, 2019, 2022, and 2025; PowerShell 5.1+.
     Calls dependent scripts: mig_prep, Export-MigrationState, Test-MigrationReadiness,
@@ -32,7 +39,8 @@
 [CmdletBinding()]
 param(
     [ValidateSet('ReadinessCheck', 'Prepare', 'ValidatePost')]
-    [string]$Phase
+    [string]$Phase,
+    [switch]$DeepScan
 )
 
 Set-StrictMode -Version 2.0
@@ -261,7 +269,9 @@ function Invoke-ValidatePost {
         return
     }
     
-    & $restoreStatePath -Mode Full
+    $restoreArgs = @{ Mode = 'Full' }
+    if ($DeepScan) { $restoreArgs['DeepScan'] = $true }
+    & $restoreStatePath @restoreArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Status "Restore-And-TestMigrationState completed with warnings or errors." 'WARNING'
     } else {
