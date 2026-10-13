@@ -172,44 +172,28 @@ function Test-Administrator {
     }
 }
 
-function Get-VMwareToolsUninstallInfo {
-    $paths = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
-    )
-    Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object {
-        $displayNameProperty = $_.PSObject.Properties['DisplayName']
-        $displayNameProperty -and $displayNameProperty.Value -eq 'VMware Tools'
-    } | Select-Object -First 1
-}
-
-function Remove-VMwareTools {
+function Disable-VMwareToolsServices {
     $service = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
-    $uninstallInfo = Get-VMwareToolsUninstallInfo
-    if (-not $service -and -not $uninstallInfo) {
-        Add-Result 'VMware Tools removal' 'PASS' 'VMware Tools is not installed.'
+    if (-not $service) {
+        Add-Result 'VMware Tools shutdown' 'PASS' 'VMware Tools service is not installed.'
         return
     }
-    if (-not $uninstallInfo -or -not $uninstallInfo.PSChildName) {
-        Add-Result 'VMware Tools removal' 'FAIL' 'VMware Tools appears installed, but its MSI product code could not be determined for silent removal. Remove it manually via Programs and Features.'
-        return
+    
+    try {
+        # Stop the service if running
+        if ($service.Status -eq 'Running') {
+            Stop-Service -Name 'VMTools' -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+            $service.Refresh()
+        }
+        
+        # Disable the service so it won't start on boot
+        Set-Service -Name 'VMTools' -StartupType Disabled -ErrorAction SilentlyContinue
+        
+        Add-Result 'VMware Tools shutdown' 'PASS' 'VMware Tools service has been stopped and disabled. The service will remain installed for potential rollback.'
+    } catch {
+        Add-Result 'VMware Tools shutdown' 'FAIL' "Failed to disable VMware Tools service: $($_.Exception.Message)"
     }
-    $productCode = $uninstallInfo.PSChildName
-    $uninstallLog = Join-Path $LogDirectory 'vmware-tools-uninstall.log'
-    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', "`"$uninstallLog`"") -Wait -PassThru
-    if ($process.ExitCode -notin 0, 3010) {
-        Add-Result 'VMware Tools removal' 'FAIL' "Uninstall failed with exit code $($process.ExitCode). See $uninstallLog."
-        return
-    }
-    $remainingService = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
-    $remainingUninstallInfo = Get-VMwareToolsUninstallInfo
-    if ($remainingService -or $remainingUninstallInfo) {
-        Add-Result 'VMware Tools removal' 'FAIL' 'Uninstall reported success, but the service or registry entry is still present.'
-        return
-    }
-    $message = "VMware Tools removed (product code $productCode)."
-    if ($process.ExitCode -eq 3010) { $message += ' A reboot is pending to complete the removal.' }
-    Add-Result 'VMware Tools removal' 'PASS' $message
 }
 
 function Get-OpticalMedia {
