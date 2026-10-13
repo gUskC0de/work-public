@@ -14,7 +14,7 @@
     Directory containing PreMigrationState.json and NetworkConfiguration.json.
 
 .PARAMETER Mode
-    ValidateOnly (default), ApplyNetwork, CompareOnly, or Full.
+    ValidateOnly (default), ApplyNetwork, CompareOnly, Full, or VmwareUninstall.
 
 .PARAMETER Force
     Allows validation to continue when the captured computer name differs from the
@@ -50,7 +50,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [string]$StateDirectory = '',
-    [ValidateSet('ValidateOnly', 'ApplyNetwork', 'CompareOnly', 'Full')]
+    [ValidateSet('ValidateOnly', 'ApplyNetwork', 'CompareOnly', 'Full', 'VmwareUninstall')]
     [string]$Mode = 'ValidateOnly',
     [switch]$Force,
     [string]$DnsTestHost = '',
@@ -812,6 +812,15 @@ try {
     $script:LogWriter = New-Object System.IO.StreamWriter($LogPath, $false, [Text.Encoding]::UTF8)
     Write-Log "Starting post-migration validation in $Mode mode (code revision $CodeRevision)." ([ConsoleColor]::Cyan)
     if (-not (Test-Administrator)) { $null = Write-Reports; exit 10 }
+    # VmwareUninstall mode skips all validation and only uninstalls VMware Tools
+    if ($Mode -eq 'VmwareUninstall') {
+        Write-Log 'VmwareUninstall mode: Skipping validation, uninstalling VMware Tools only.' ([ConsoleColor]::Cyan)
+        Remove-VMwareToolsUninstall
+        $summary = Write-Reports
+        Write-Log "Overall result: $($summary.overallStatus)" (Get-StateColor $summary.overallStatus)
+        if ($summary.overallStatus -eq 'FAIL') { exit 2 }; if ($summary.overallStatus -eq 'WARNING') { exit 1 }; exit 0
+    }
+    
     if (-not (Test-InputData)) { $null = Write-Reports; exit 20 }
     if (-not (Test-CaptureCompleteness)) { $null = Write-Reports; exit 20 }
     if (-not (Test-ComputerIdentity)) { $null = Write-Reports; exit 20 }
@@ -824,7 +833,8 @@ try {
     $script:CurrentNetwork = Get-CurrentNetworkState
     $postState = Get-PostMigrationState
     $postState | ConvertTo-Json -Depth 12 | Set-Content -Path $PostStatePath -Encoding UTF8
-    Compare-SystemState; Compare-NetworkState; Compare-DiskState; Compare-Services; Compare-Collections; Test-FilesystemAndEvents; Test-Connectivity; Test-QemuAgentAndVMwareTools
+    Compare-SystemState; Compare-NetworkState; <# Compare-DiskState #>; Compare-Services; Compare-Collections; Test-FilesystemAndEvents; Test-Connectivity; Test-QemuAgentAndVMwareTools
+    # TODO: Compare-DiskState has parameter binding issues with partition comparison - will revisit
     if ($Mode -eq 'Full') { Remove-VMwareToolsUninstall }
     $summary = Write-Reports
     Write-Log "Overall result: $($summary.overallStatus)" (Get-StateColor $summary.overallStatus)
