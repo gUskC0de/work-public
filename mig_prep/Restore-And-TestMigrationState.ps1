@@ -578,14 +578,43 @@ function Get-ListeningPortState {
     return @(Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $process = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; [pscustomobject][ordered]@{ localAddress = $_.LocalAddress; localPort = [int]$_.LocalPort; owningProcessId = [int]$_.OwningProcess; processName = if ($process) { $process.ProcessName } else { $null } } })
 }
 function Compare-Collections {
+    # Roles and Features
     $currentRoles = Get-RoleFeatureState
-    if (-not $script:PreState.rolesAndFeatures.available -or -not $currentRoles.available) { Add-Result 'Server roles and features' 'NOT_CHECKED' 'Role comparison was unavailable on one or both sides.' }
-    else { $roleBefore = @($script:PreState.rolesAndFeatures.installed | ForEach-Object { if ($_ -is [string]) { $_ } else { $_.name } }); Compare-Values 'Server roles and features' $roleBefore @($currentRoles.installed) }
+    if (-not $script:PreState.rolesAndFeatures.available -or -not $currentRoles.available) { 
+        Add-Result 'Server roles and features' 'NOT_CHECKED' 'Role comparison was unavailable on one or both sides.' 
+    } else { 
+        $roleBefore = @($script:PreState.rolesAndFeatures.installed | ForEach-Object { if ($_ -is [string]) { $_ } else { $_.name } })
+        $roleNow = @($currentRoles.installed)
+        Compare-Values 'Server roles and features' $roleBefore $roleNow 
+    }
+    
+    # SMB Shares
     $currentShares = Get-SmbShareState
-    if (-not $script:PreState.smbShares.available -or -not $currentShares.available) { Add-Result 'SMB shares' 'NOT_CHECKED' 'SMB share comparison was unavailable on one or both sides.' }
-    else { $shareBefore = @($script:PreState.smbShares.shares | ForEach-Object { "$($_.name)|$($_.path)" }); $shareNow = @($currentShares.shares | ForEach-Object { "$($_.name)|$($_.path)" }); Compare-Values 'SMB shares' $shareBefore $shareNow }
-    $taskBefore = @($script:PreState.scheduledTasks | ForEach-Object { "$($_.taskPath)$($_.taskName)" }); if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) { Add-Result 'Scheduled tasks' 'NOT_CHECKED' 'Scheduled-task comparison is unavailable on this server.' } else { $taskNow = @((Get-ScheduledTaskState) | ForEach-Object { "$($_.taskPath)$($_.taskName)" }); Compare-Values 'Scheduled tasks' $taskBefore $taskNow }
-    $portBefore = @($script:PreState.listeningPorts | ForEach-Object { '{0}:{1}' -f $_.localAddress, $_.localPort }); if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { Add-Result 'Listening ports' 'NOT_CHECKED' 'Listening-port comparison is unavailable on this server.' } else { $portNow = @((Get-ListeningPortState) | ForEach-Object { '{0}:{1}' -f $_.localAddress, $_.localPort }); Compare-Values 'Listening ports' $portBefore $portNow }
+    if (-not $script:PreState.smbShares.available -or -not $currentShares.available) { 
+        Add-Result 'SMB shares' 'NOT_CHECKED' 'SMB share comparison was unavailable on one or both sides.' 
+    } else { 
+        $shareBefore = @($script:PreState.smbShares.shares | ForEach-Object { "$($_.name)|$($_.path)" })
+        $shareNow = @($currentShares.shares | ForEach-Object { "$($_.name)|$($_.path)" })
+        Compare-Values 'SMB shares' $shareBefore $shareNow 
+    }
+    
+    # Scheduled Tasks
+    $taskBefore = @($script:PreState.scheduledTasks | ForEach-Object { "$($_.taskPath)$($_.taskName)" })
+    if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) { 
+        Add-Result 'Scheduled tasks' 'NOT_CHECKED' 'Scheduled-task comparison is unavailable on this server.' 
+    } else { 
+        $taskNow = @(Get-ScheduledTaskState | ForEach-Object { "$($_.taskPath)$($_.taskName)" })
+        Compare-Values 'Scheduled tasks' $taskBefore $taskNow 
+    }
+    
+    # Listening Ports
+    $portBefore = @($script:PreState.listeningPorts | ForEach-Object { '{0}:{1}' -f $_.localAddress, $_.localPort })
+    if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { 
+        Add-Result 'Listening ports' 'NOT_CHECKED' 'Listening-port comparison is unavailable on this server.' 
+    } else { 
+        $portNow = @(Get-ListeningPortState | ForEach-Object { '{0}:{1}' -f $_.localAddress, $_.localPort })
+        Compare-Values 'Listening ports' $portBefore $portNow 
+    }
 }
 function Test-FilesystemAndEvents {
     # Check dirty bit status (properly detect "NOT Dirty" vs "IS Dirty")
