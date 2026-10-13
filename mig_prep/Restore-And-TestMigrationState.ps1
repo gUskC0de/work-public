@@ -685,7 +685,9 @@ function Test-FilesystemAndEvents {
     }
 }
 function Test-Connectivity {
-    $adapter = @($script:CurrentNetwork.activeAdapters | Where-Object { $_ -and $_.status -eq 'Up' } | Select-Object -First 1); $gateways = @($adapter.defaultGateways); $details = @(); $gatewaySuccess = $false; $domainDiscoverySuccess = $true; $portFailures = @()
+    $adapter = @($script:CurrentNetwork.activeAdapters | Where-Object { $_ -and $_.status -eq 'Up' } | Select-Object -First 1)
+    $gateways = if ($adapter.Count -gt 0) { @($adapter[0].defaultGateways) } else { @() }
+    $details = @(); $gatewaySuccess = $false; $domainDiscoverySuccess = $true; $portFailures = @()
     foreach ($gateway in $gateways) { if (Test-Connection -ComputerName $gateway -Count 1 -Quiet -ErrorAction SilentlyContinue) { $gatewaySuccess = $true; $details += "Gateway $gateway responded to ICMP." } else { $details += "Gateway $gateway did not respond to ICMP." } }
     $hostName = if ($DnsTestHost) { $DnsTestHost } else { (Get-CimInstance Win32_ComputerSystem).Domain }; if (-not $hostName) { $hostName = 'example.com' }
     $dnsSuccess = $false; try { Resolve-DnsName $hostName -ErrorAction Stop | Out-Null; $dnsSuccess = $true; $details += "DNS resolution succeeded for $hostName." } catch { $details += "DNS resolution failed for $hostName." }
