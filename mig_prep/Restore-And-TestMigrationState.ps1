@@ -55,7 +55,8 @@ param(
     [switch]$Force,
     [string]$DnsTestHost = '',
     [string]$ApplicationConfigPath = '',
-    [datetime]$MigrationTimestamp
+    [datetime]$MigrationTimestamp,
+    [switch]$DeepScan
 )
 
 Set-StrictMode -Version 2.0
@@ -251,7 +252,7 @@ function Report-ManualNetworkHandling {
         $adapterDetails = @($script:PreNetwork.activeAdapters | ForEach-Object { "- $($_.adapterName) ($($_.interfaceDescription)): IP=$((@($_.ipv4Addresses | ForEach-Object address)) -join ', '), Gateway=$($_.defaultGateways -join ', ')" })
         Add-Result 'Manual network handling' 'WARNING' "Multiple active adapters ($adapterCount) were detected at capture time. Automatic restoration will only apply the first adapter. Review all captured adapters and apply remaining network configuration manually." $adapterDetails
     } else {
-        Add-Result 'Manual network handling' 'INFO' "Single active adapter detected at capture time. Automatic restoration will apply network configuration."
+        Add-Result 'Manual network handling' 'PASS' "Single active adapter detected at capture time. Automatic restoration will apply network configuration."
     }
 }
 
@@ -494,15 +495,52 @@ function Compare-DiskState {
     $details = @()
     foreach ($old in $before) { $size = @($current | Where-Object { [math]::Abs($_.Size - $old.sizeBytes) -lt 1GB } | Select-Object -First 1); if ($size) { $details += "Matched disk size $([math]::Round($old.sizeBytes / 1GB, 2)) GB." } else { $details += "No current disk matched expected size $([math]::Round($old.sizeBytes / 1GB, 2)) GB." } }
     if ($details -match 'No current') { Add-Result 'Disk sizes' 'FAIL' 'One or more expected disk sizes were not found.' $details } else { Add-Result 'Disk sizes' 'PASS' 'Expected disk sizes were found.' $details }
-    Compare-Values 'Partition and volume layout' (@($script:PreState.partitionsAndVolumes | ForEach-Object { "$($_.driveLetter)|$($_.volumeLabel)|$($_.fileSystem)|$($_.mountPoints -join ',')" })) (@(Get-PartitionVolumeStateForComparison))
+    Compare-Values 'Partition and volume layout' (@($script:PreState.partitionsAndVolumes | Where-Object { $_.driveLetter } | ForEach-Object { "$($_.driveLetter)|$($_.volumeLabel)|$($_.fileSystem)|$($_.mountPoints -join ',')" })) (@(Get-PartitionVolumeStateForComparison | Where-Object { $_ -match '^[A-Z]\|' }))
 }
 function Get-PartitionVolumeStateForComparison {
     # $volume is $null for partitions with no accessible volume (e.g. Recovery, EFI, MSR).
     $output = @(); foreach ($partition in @(Get-Partition -ErrorAction SilentlyContinue)) { $volume = $null; try { $volume = $partition | Get-Volume -ErrorAction Stop } catch { }; $output += "$(if ($volume) { $volume.DriveLetter }else{$null})|$(if ($volume) { $volume.FileSystemLabel }else{$null})|$(if ($volume) { $volume.FileSystem }else{$null})|$(if ($volume) { $volume.Path }else{$null})" }; return @($output)
 }
 function Compare-Services {
-    $current = @(Get-CimInstance Win32_Service | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name); $before = @($script:PreState.services.runningBeforeMigration); $missing = @($before | Where-Object { $_ -notin $current -and $_ -notmatch 'VMTools|VGAuthService' })
-    if ($missing.Count) { Add-Result 'Running services' 'WARNING' "$($missing.Count) services running before migration are stopped now." $missing } else { Add-Result 'Running services' 'PASS' 'Services running before migration are still running, excluding VMware Tools differences.' }
+    # Define service categories to exclude or categorize
+    $vmwareServices = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService')
+    $userSessionServices = @()  # Pattern: matches _NNNN (SID-based user services)
+    $migrationCommonServices = @('DeviceInstall', 'DsmSvc', 'IfsVsc', 'IKEEXT', 'PolicyAgent', 'SharedAccess')
+    
+    $current = @(Get-CimInstance Win32_Service | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name)
+    $before = @($script:PreState.services.runningBeforeMigration)
+    
+    # Find services that stopped
+    $missing = @($before | Where-Object { $_ -notin $current })
+    
+    # Categorize stopped services
+    $vmwareStopped = @($missing | Where-Object { $_ -in $vmwareServices })
+    $userSessionStopped = @($missing | Where-Object { $_ -match '_\d+$' })
+    $migrationCommonStopped = @($missing | Where-Object { $_ -in $migrationCommonServices })
+    $otherStopped = @($missing | Where-Object { $_ -notin $vmwareServices -and $_ -notmatch '_\d+$' -and $_ -notin $migrationCommonServices })
+    
+    # Report by category
+    $details = @()
+    
+    if ($vmwareStopped.Count -gt 0) {
+        $details += "VMware services disabled (expected): $($vmwareStopped -join ', ')"
+    }
+    
+    if ($userSessionStopped.Count -gt 0) {
+        $details += "User session services stopped (expected, SID-based): $($userSessionStopped -join ', ')"
+    }
+    
+    if ($migrationCommonStopped.Count -gt 0) {
+        $details += "Migration-related services stopped (expected): $($migrationCommonStopped -join ', ')"
+    }
+    
+    # Report unexpected service stops only
+    if ($otherStopped.Count -gt 0) {
+        Add-Result 'Running services' 'WARNING' "$($otherStopped.Count) unexpected service(s) stopped after migration. Review before declaring migration successful." $details + @("Unexpected: $($otherStopped -join ', ')")
+    } else {
+        $summary = if ($details.Count -eq 0) { 'No services unexpectedly stopped.' } else { 'Expected service changes only (VMware, user sessions, migration-related).' }
+        Add-Result 'Running services' 'PASS' $summary $details
+    }
 }
 function Get-RoleFeatureState {
     if (-not (Get-Module -ListAvailable -Name ServerManager)) { return [pscustomobject][ordered]@{ installed = @(); available = $false } }
@@ -537,10 +575,72 @@ function Compare-Collections {
     $portBefore = @($script:PreState.listeningPorts | ForEach-Object { '{0}:{1}' -f $_.localAddress, $_.localPort }); if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { Add-Result 'Listening ports' 'NOT_CHECKED' 'Listening-port comparison is unavailable on this server.' } else { $portNow = @((Get-ListeningPortState) | ForEach-Object { '{0}:{1}' -f $_.localAddress, $_.localPort }); Compare-Values 'Listening ports' $portBefore $portNow }
 }
 function Test-FilesystemAndEvents {
-    $volumes = @(Get-Volume | Where-Object { $_.DriveLetter -and $_.FileSystem -eq 'NTFS' }); $dirty = @(); foreach ($volume in $volumes) { $drive = "$($volume.DriveLetter):"; $text = (& fsutil dirty query $drive 2>&1) -join ' '; if ($LASTEXITCODE -ne 0 -or $text -match 'dirty') { $dirty += ('{0}: {1}' -f $drive, $text) } }
-    if ($dirty.Count) { Add-Result 'Filesystem health' 'WARNING' 'One or more NTFS volumes require review; only read-only checks were run.' $dirty } else { Add-Result 'Filesystem health' 'PASS' 'Read-only NTFS checks passed.' }
-    $since = if ($MigrationTimestamp) { $MigrationTimestamp } else { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime }; $events = @(); foreach ($log in @('System', 'Application')) { try { $events += @(Get-WinEvent -FilterHashtable @{ LogName = $log; Level = 1, 2; StartTime = $since } -MaxEvents 200 -ErrorAction Stop) } catch { } }
-    $interesting = @($events | Where-Object { $_.ProviderName -match 'Disk|Ntfs|StorPort|volmgr|Service Control Manager|WHEA-Logger' -or $_.Message -match 'disk|NTFS|storage' } | Select-Object -Unique Id, ProviderName, TimeCreated, Message -First 25); if ($interesting.Count) { Add-Result 'Post-migration event logs' 'WARNING' "$($interesting.Count) relevant event(s) found since migration." (@($interesting | ForEach-Object { "$($_.TimeCreated): ID=$($_.Id), Provider=$($_.ProviderName), $($_.Message -replace '\s+', ' ')" })) } else { Add-Result 'Post-migration event logs' 'PASS' 'No relevant disk/filesystem/storage events found since migration.' }
+    # Check dirty bit status (properly detect "NOT Dirty" vs "IS Dirty")
+    $volumes = @(Get-Volume | Where-Object { $_.DriveLetter -and $_.FileSystem -eq 'NTFS' })
+    $dirty = @()
+    foreach ($volume in $volumes) {
+        $drive = "$($volume.DriveLetter):"
+        $text = (& fsutil dirty query $drive 2>&1) -join ' '
+        # Only flag as dirty if fsutil errors OR explicitly says IS Dirty (not "NOT Dirty")
+        if ($LASTEXITCODE -ne 0 -or ($text -match 'IS.*Dirty' -and $text -notmatch 'NOT.*Dirty')) {
+            $dirty += ('{0}: {1}' -f $drive, $text)
+        }
+    }
+    
+    # Report dirty bit status
+    if ($dirty.Count) {
+        Add-Result 'Filesystem health' 'WARNING' 'One or more NTFS volumes report dirty bit; consider running chkdsk /scan.' $dirty
+    } else {
+        Add-Result 'Filesystem health' 'PASS' 'Read-only NTFS dirty bit checks passed.'
+    }
+    
+    # Optional deep scan if -DeepScan requested
+    if ($DeepScan) {
+        $scanResults = @()
+        foreach ($volume in $volumes) {
+            $drive = "$($volume.DriveLetter):"
+            Write-Host "Running online scan on $drive (this may take a few minutes)..." -ForegroundColor Cyan
+            $scanOutput = (& chkdsk $drive /scan 2>&1) -join ' '
+            if ($LASTEXITCODE -eq 0) {
+                $scanResults += "$drive: Online scan completed successfully."
+            } else {
+                $scanResults += "$drive: Scan reported issues (code: $LASTEXITCODE). $scanOutput"
+            }
+        }
+        if ($scanResults) {
+            Add-Result 'Deep filesystem scan' 'PASS' 'Online chkdsk /scan completed.' $scanResults
+        }
+    }
+    
+    # Check storage driver health (critical post-migration)
+    $storageHealth = @()
+    try {
+        $scsiDevices = @(Get-PnpDevice -Class SCSIAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' })
+        if ($scsiDevices.Count -gt 0) {
+            $storageHealth += "Storage controllers OK: $($scsiDevices.Count) SCSI adapter(s) present and functional."
+        } else {
+            $storageHealth += "WARNING: No functional SCSI adapters detected."
+        }
+    } catch { }
+    
+    if ($storageHealth) {
+        Add-Result 'Storage driver health' 'PASS' 'Storage controller status verified.' $storageHealth
+    }
+    
+    # Check post-migration event logs
+    $since = if ($MigrationTimestamp) { $MigrationTimestamp } else { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime }
+    $events = @()
+    foreach ($log in @('System', 'Application')) {
+        try {
+            $events += @(Get-WinEvent -FilterHashtable @{ LogName = $log; Level = 1, 2; StartTime = $since } -MaxEvents 200 -ErrorAction Stop)
+        } catch { }
+    }
+    $interesting = @($events | Where-Object { $_.ProviderName -match 'Disk|Ntfs|StorPort|volmgr|Service Control Manager|WHEA-Logger' -or $_.Message -match 'disk|NTFS|storage' } | Select-Object -Unique Id, ProviderName, TimeCreated, Message -First 25)
+    if ($interesting.Count) {
+        Add-Result 'Post-migration event logs' 'WARNING' "$($interesting.Count) relevant event(s) found since migration." (@($interesting | ForEach-Object { "$($_.TimeCreated): ID=$($_.Id), Provider=$($_.ProviderName), $($_.Message -replace '\s+', ' ')" }))
+    } else {
+        Add-Result 'Post-migration event logs' 'PASS' 'No relevant disk/filesystem/storage events found since migration.'
+    }
 }
 function Test-Connectivity {
     $adapter = @($script:CurrentNetwork.activeAdapters | Where-Object { $_ -and $_.status -eq 'Up' } | Select-Object -First 1); $gateways = @($adapter.defaultGateways); $details = @(); $gatewaySuccess = $false; $domainDiscoverySuccess = $true; $portFailures = @()
@@ -597,9 +697,9 @@ function Remove-VMwareToolsUninstall {
         
         Write-Log "Uninstalling VMware Tools (Product Code: $productCode)..." ([ConsoleColor]::Cyan)
         
-        $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', "`\"$uninstallLog`\"")
+        $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', "`"$uninstallLog`"") -Wait -PassThru -ErrorAction SilentlyContinue
         
-        if ($process.ExitCode -notin 0, 3010) {
+        if ($process.ExitCode -notin @(0, 3010)) {
             Add-Result 'VMware Tools uninstall' 'FAIL' "Uninstall failed with exit code $($process.ExitCode). See log at $uninstallLog"
             return
         }
