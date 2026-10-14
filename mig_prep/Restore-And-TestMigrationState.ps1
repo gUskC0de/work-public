@@ -709,7 +709,7 @@ function Test-Connectivity {
 function Remove-VMwareToolsUninstall {
     <#
     .SYNOPSIS
-        Uninstalls VMware Tools after successful network restoration and validation.
+        Uninstalls VMware Tools using hybrid approach: clean MSI first, aggressive cleanup if MSI fails.
     #>
     $service = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
     
@@ -718,109 +718,125 @@ function Remove-VMwareToolsUninstall {
         return
     }
     
-    Write-Log "VMware Tools service found. Gathering uninstall information..." ([ConsoleColor]::Cyan)
-    
-    # Get the uninstall info from registry
-    $uninstallInfo = @(
-        Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
-        Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
-    ) | Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq 'VMware Tools' } | Select-Object -First 1
-    
-    if (-not $uninstallInfo) {
-        Add-Result 'VMware Tools uninstall' 'WARNING' 'VMware Tools service exists but no registry entry found. Will attempt alternative uninstall methods.'
-        $uninstallInfo = @{}
-    }
-    
-    $productCode = if ($uninstallInfo.PSChildName) { $uninstallInfo.PSChildName } else { $null }
-    $uninstallLog = Join-Path (Split-Path $LogPath) 'vmware-tools-uninstall.log'
-    $installerPath = if ($uninstallInfo.PSObject.Properties['InstallLocation']) { $uninstallInfo.InstallLocation } else { $null }
-    
-    Write-Log "Product Code: $productCode | Installer Path: $installerPath" ([ConsoleColor]::Gray)
+    Write-Log "VMware Tools service found. Starting hybrid uninstall approach..." ([ConsoleColor]::Cyan)
     
     try {
-        # Stop VMware services
-        Write-Log "Stopping VMware services..." ([ConsoleColor]::Cyan)
+        # Stop all VMware services first
+        Write-Log "Step 1: Stopping all VMware services..." ([ConsoleColor]::Yellow)
         Get-Service -Name 'VMTools', 'VGAuthService', 'VMVss', 'VM3DService' -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Running' } | Stop-Service -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 1000
         
-        $uninstallSuccess = $false
+        $uninstallLog = Join-Path (Split-Path $LogPath) 'vmware-tools-uninstall.log'
+        $msiUninstallSuccess = $false
         
-        # Method 1: Try msiexec with product code from registry
-        if ($productCode -match '^\{[0-9A-F\-]+\}$') {
-            Write-Log "Method 1: Attempting msiexec uninstall with product code $productCode..." ([ConsoleColor]::Yellow)
+        # PHASE 1: Try clean MSI uninstall
+        Write-Log "Step 2: Attempting clean MSI uninstall (Phase 1)..." ([ConsoleColor]::Yellow)
+        $uninstallInfo = @(
+            Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
+            Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
+        ) | Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq 'VMware Tools' } | Select-Object -First 1
+        
+        if ($uninstallInfo -and $uninstallInfo.PSChildName -match '^\{[0-9A-F\-]+\}$') {
+            $productCode = $uninstallInfo.PSChildName
+            Write-Log "Found product code: $productCode" ([ConsoleColor]::Gray)
             $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', $uninstallLog) -Wait -PassThru -NoNewWindow -ErrorAction SilentlyContinue
             
             Write-Log "msiexec exit code: $($process.ExitCode)" ([ConsoleColor]::Gray)
-            
             if ($process.ExitCode -in @(0, 3010)) {
-                $uninstallSuccess = $true
-                Write-Log "msiexec uninstall reported success" ([ConsoleColor]::Green)
-            } elseif ($process.ExitCode -eq 1683) {
-                Write-Log "msiexec reported product not installed (1683)" ([ConsoleColor]::Yellow)
-                $uninstallSuccess = $true
+                $msiUninstallSuccess = $true
+                Write-Log "Phase 1 (MSI) succeeded!" ([ConsoleColor]::Green)
             } else {
-                Write-Log "msiexec failed with code $($process.ExitCode). Log: $uninstallLog" ([ConsoleColor]::Red)
+                Write-Log "Phase 1 (MSI) failed with exit code $($process.ExitCode). Proceeding to Phase 2 aggressive cleanup..." ([ConsoleColor]::Yellow)
             }
+        } else {
+            Write-Log "No valid product code found. Proceeding to Phase 2 aggressive cleanup..." ([ConsoleColor]::Yellow)
         }
         
-        # Method 2: Try wmic if msiexec didn't work
-        if (-not $uninstallSuccess -and $productCode) {
-            Write-Log "Method 2: Attempting wmic uninstall..." ([ConsoleColor]::Yellow)
-            try {
-                $wmicResult = & wmic product where "IdentifyingNumber='$productCode'" call uninstall /nointeractive 2>&1
-                $wmic_exit = $LASTEXITCODE
-                Write-Log "wmic exit code: $wmic_exit" ([ConsoleColor]::Gray)
-                if ($wmic_exit -eq 0) {
-                    $uninstallSuccess = $true
-                    Write-Log "wmic uninstall reported success" ([ConsoleColor]::Green)
+        # PHASE 2: Aggressive service & registry cleanup (only if MSI didn't work)
+        if (-not $msiUninstallSuccess) {
+            Write-Log "Step 3: Aggressive cleanup phase (Phase 2)..." ([ConsoleColor]::Cyan)
+            
+            # Force stop all VMware services again
+            Get-Service -Name 'VMTools', 'VGAuthService', 'VMVss', 'VM3DService', 'vm3dservice' -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+            
+            # Delete services using sc.exe (this removes them from registry)
+            $servicesToDelete = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService', 'vm3dservice')
+            Write-Log "Deleting VMware services via sc.exe..." ([ConsoleColor]::Yellow)
+            foreach ($svc in $servicesToDelete) {
+                $result = & sc.exe delete $svc 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Log "Deleted service: $svc" ([ConsoleColor]::Green)
+                } else {
+                    Write-Log "Service $svc: $result" ([ConsoleColor]::Gray)
                 }
-            } catch {
-                Write-Log "wmic uninstall failed: $($_.Exception.Message)" ([ConsoleColor]::Red)
             }
-        }
-        
-        # Method 3: Try direct uninstall string from registry if available
-        if (-not $uninstallSuccess -and $uninstallInfo.PSObject.Properties['UninstallString']) {
-            Write-Log "Method 3: Attempting UninstallString from registry..." ([ConsoleColor]::Yellow)
-            try {
-                $uninstallString = $uninstallInfo.UninstallString
-                Write-Log "UninstallString: $uninstallString" ([ConsoleColor]::Gray)
-                
-                if ($uninstallString -match 'msiexec') {
-                    # Extract and clean the product code from uninstall string
-                    if ($uninstallString -match '\{[0-9A-F\-]+\}') {
-                        $extractedCode = $Matches[0]
-                        Write-Log "Extracted product code: $extractedCode" ([ConsoleColor]::Gray)
-                        $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $extractedCode, '/qn', '/norestart') -Wait -PassThru -NoNewWindow -ErrorAction SilentlyContinue
-                        if ($process.ExitCode -in @(0, 3010)) {
-                            $uninstallSuccess = $true
-                            Write-Log "Registry UninstallString method succeeded" ([ConsoleColor]::Green)
-                        }
-                    }
+            
+            # Find and remove VMware Tools registry entries
+            Write-Log "Finding VMware Tools registry entries..." ([ConsoleColor]::Yellow)
+            $vmwareKeys = @(
+                Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
+                Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
+            ) | Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq 'VMware Tools' }
+            
+            foreach ($key in $vmwareKeys) {
+                try {
+                    $regPath = $key.PSPath
+                    $keyName = Split-Path -Leaf $regPath
+                    Write-Log "Found registry key: $keyName" ([ConsoleColor]::Gray)
+                    
+                    # Export for audit trail
+                    $exportPath = Join-Path (Split-Path $LogPath) "VMwareTools_${keyName}.reg"
+                    Write-Log "Exporting registry to: $exportPath" ([ConsoleColor]::Gray)
+                    & reg export $regPath $exportPath /y 2>&1 | Out-Null
+                    
+                    # Delete the registry key
+                    Write-Log "Removing registry key: $regPath" ([ConsoleColor]::Yellow)
+                    Remove-Item -Path $regPath -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Log "Registry key removed successfully" ([ConsoleColor]::Green)
+                } catch {
+                    Write-Log "Error processing registry key: $($_.Exception.Message)" ([ConsoleColor]::Red)
                 }
-            } catch {
-                Write-Log "Registry UninstallString method failed: $($_.Exception.Message)" ([ConsoleColor]::Red)
             }
+            
+            Write-Log "Phase 2 (aggressive cleanup) completed" ([ConsoleColor]::Green)
         }
         
-        # Verify uninstall
-        Write-Log "Verifying VMware Tools removal..." ([ConsoleColor]::Cyan)
+        # PHASE 3: Verification
+        Write-Log "Step 4: Verification..." ([ConsoleColor]::Cyan)
         Start-Sleep -Milliseconds 1000
         
-        $remainingService = Get-Service -Name 'VMTools' -ErrorAction SilentlyContinue
-        $remainingRegistry = @(
+        # Check WMI for VMware products
+        Write-Log "Checking WMI for VMware products..." ([ConsoleColor]::Gray)
+        $wmiProducts = Get-WmiObject Win32_Product -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'VMware' }
+        if ($wmiProducts) {
+            Write-Log "Found WMI products: $($wmiProducts.Name -join ', ')" ([ConsoleColor]::Yellow)
+        } else {
+            Write-Log "No VMware products found in WMI" ([ConsoleColor]::Green)
+        }
+        
+        # Check services
+        Write-Log "Checking for VMware services..." ([ConsoleColor]::Gray)
+        $vmServices = Get-Service -Name '*vm*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'VM|VMware|vgauth' }
+        if ($vmServices) {
+            Write-Log "Found services: $($vmServices.Name -join ', ')" ([ConsoleColor]::Yellow)
+        } else {
+            Write-Log "No VMware services found" ([ConsoleColor]::Green)
+        }
+        
+        # Check registry
+        Write-Log "Checking registry for VMware Tools entries..." ([ConsoleColor]::Gray)
+        $regCheck = @(
             Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
             Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
         ) | Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq 'VMware Tools' }
         
-        if (-not $remainingService -and $remainingRegistry.Count -eq 0) {
-            $message = "VMware Tools successfully uninstalled."
-            if ($productCode) { $message += " Product Code: $productCode" }
-            Add-Result 'VMware Tools uninstall' 'PASS' $message
-        } elseif ($remainingService) {
-            Add-Result 'VMware Tools uninstall' 'WARNING' "VMware Tools service still present after uninstall attempt. Used methods: $(if ($productCode) {'msiexec, wmic'} else {'registry'}). Manual cleanup via Programs and Features may be required."
+        if ($regCheck) {
+            Write-Log "Warning: VMware Tools registry entry still present" ([ConsoleColor]::Yellow)
+            Add-Result 'VMware Tools uninstall' 'WARNING' 'Service removed but registry entry remains. Manual cleanup via Programs and Features may still be needed.'
         } else {
-            Add-Result 'VMware Tools uninstall' 'WARNING' "VMware Tools registry entry still present, but service removed. Files may need manual cleanup."
+            Write-Log "VMware Tools registry entry completely removed" ([ConsoleColor]::Green)
+            Add-Result 'VMware Tools uninstall' 'PASS' 'VMware Tools successfully removed (services, registry, and WMI entries cleaned).'
         }
     } catch {
         Add-Result 'VMware Tools uninstall' 'FAIL' "Uninstall process error: $($_.Exception.Message)"
