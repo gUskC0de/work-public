@@ -764,11 +764,13 @@ function Remove-VMwareToolsUninstall {
             $servicesToDelete = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService', 'vm3dservice')
             Write-Log "Deleting VMware services via sc.exe..." ([ConsoleColor]::Yellow)
             foreach ($svc in $servicesToDelete) {
-                $result = & sc.exe delete $svc 2>&1
-                if ($LASTEXITCODE -eq 0) {
+                & sc.exe delete $svc 2>&1 | Out-Null
+                $scExitCode = $LASTEXITCODE
+                if ($scExitCode -eq 0 -or $scExitCode -eq 1072) {
+                    # Exit codes: 0 = success, 1072 = service not found (also ok)
                     Write-Log "Deleted service: $svc" ([ConsoleColor]::Green)
                 } else {
-                    Write-Log "Service $svc: $result" ([ConsoleColor]::Gray)
+                    Write-Log "Service $svc: exit code $scExitCode" ([ConsoleColor]::Gray)
                 }
             }
             
