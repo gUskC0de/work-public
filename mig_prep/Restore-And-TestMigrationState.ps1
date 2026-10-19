@@ -587,7 +587,7 @@ function Test-DriveLetterAssignment {
                 $label = if ($_.volumeLabel) { $_.volumeLabel } else { '(no label)' }
                 $driveLtr = $_.driveLetter
                 $fileSystem = $_.fileSystem
-                "$driveLtr: $label ($fileSystem)"
+                "${driveLtr}: $label ($fileSystem)"
             })
             Add-Result 'Drive letter assignment' 'PASS' 'All drive letters match pre-migration state.' $details
         }
