@@ -36,6 +36,7 @@
     Calls dependent scripts: mig_prep, Export-MigrationState, Test-MigrationReadiness,
     Test-DCMigrationHealth, Restore-And-TestMigrationState.
 #>
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [ValidateSet('ReadinessCheck', 'Prepare', 'ValidatePost')]

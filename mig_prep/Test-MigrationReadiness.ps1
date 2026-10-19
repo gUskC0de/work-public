@@ -37,6 +37,7 @@
 .NOTES
     Supported targets: Windows Server 2016, 2019, 2022, and 2025; PowerShell 5.1+.
 #>
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [ValidateRange(1, 720)]

@@ -47,6 +47,7 @@
     Supported targets: Windows Server 2016, 2019, 2022, and 2025; PowerShell 5.1+.
     Expected hardware changes are reported as EXPECTED_CHANGE, not failures.
 #>
+#Requires -Version 5.1
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [string]$StateDirectory = '',
@@ -380,15 +381,40 @@ function Restore-StaticRoutes {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
     param($Mapping)
     $routes = @($script:PreNetwork.ipv4Routes | Where-Object { $_.isPersistentOrStatic -and -not $_.isConnectedRoute -and -not $_.isDefaultRoute -and $_.destinationPrefix -notmatch '^(127\.|224\.|255\.)' })
-    $restored = @(); $skipped = @(); $review = @()
+    
+    # Get primary adapter's gateways for filtering; routes with different gateways are deferred (secondary adapter)
+    $primaryGateways = @($Mapping.source.defaultGateways)
+    $restored = @(); $skipped = @(); $deferred = @(); $review = @()
     foreach ($route in $routes) {
         if ($route.nextHop -eq '0.0.0.0' -or $route.nextHop -eq '::') { $skipped += ('{0}: invalid next hop' -f $route.destinationPrefix); continue }
+        
+        # Routes with gateway different from primary are deferred (secondary adapter not yet configured)
+        if ($route.nextHop -notin $primaryGateways) { 
+            $deferred += [pscustomobject][ordered]@{ destination = $route.destinationPrefix; gateway = $route.nextHop; metric = $route.routeMetric }
+            continue 
+        }
+        
         if (Get-NetRoute -DestinationPrefix $route.destinationPrefix -NextHop $route.nextHop -ErrorAction SilentlyContinue) { $skipped += "$($route.destinationPrefix) via $($route.nextHop): already present"; continue }
         if (-not $PSCmdlet.ShouldProcess("$($route.destinationPrefix) via $($route.nextHop)", 'Restore static route')) { $review += "$($route.destinationPrefix) via $($route.nextHop): WhatIf"; continue }
         try { New-NetRoute -DestinationPrefix $route.destinationPrefix -NextHop $route.nextHop -InterfaceIndex $Mapping.target.adapter.interfaceIndex -RouteMetric $route.routeMetric -Confirm:$false | Out-Null; $restored += "$($route.destinationPrefix) via $($route.nextHop)" } catch { $review += "$($route.destinationPrefix): $($_.Exception.Message)" }
     }
-    $state = if ($review.Count) { 'MANUAL_REVIEW' } else { 'COMPLETED' }
-    Add-Action 'Static routes' $state 'Static route restoration evaluated.' ([ordered]@{ restored = @($restored); skipped = @($skipped); manualReview = @($review) })
+    
+    # Generate PowerShell commands for deferred routes (secondary adapters)
+    $deferredCommands = @()
+    if ($deferred.Count -gt 0) {
+        $deferredCommands += '# Routes for secondary adapters (configure after adding secondary NICs to Proxmox)'
+        $deferredCommands += '# Identify the secondary adapter interface index, then run these commands:'
+        foreach ($item in $deferred) {
+            $deferredCommands += "New-NetRoute -DestinationPrefix '$($item.destination)' -NextHop '$($item.gateway)' -RouteMetric $($item.metric) -ErrorAction Continue"
+        }
+    }
+    
+    $state = if ($review.Count) { 'MANUAL_REVIEW' } elseif ($deferred.Count) { 'PARTIAL' } else { 'COMPLETED' }
+    Add-Action 'Static routes' $state 'Static route restoration evaluated.' ([ordered]@{ restored = @($restored); skipped = @($skipped); deferred = @($deferred); deferredRestoreCommands = @($deferredCommands); manualReview = @($review) })
+    
+    if ($deferred.Count -gt 0) {
+        Add-Result 'Static routes' 'WARNING' "$($deferred.Count) route(s) deferred pending secondary adapter configuration." @($deferred | ForEach-Object { "Destination=$($_.destination), Gateway=$($_.gateway), Metric=$($_.metric)" })
+    }
     if ($review.Count) { Add-Result 'Static routes' 'WARNING' "$($review.Count) route(s) require manual review." $review }
 }
 function Remove-HiddenVMwareAdapters {
@@ -971,7 +997,28 @@ function Write-Reports {
     $report = [ordered]@{ schemaVersion = $SchemaVersion; generatedAtUtc = [DateTime]::UtcNow.ToString('o'); mode = $Mode; stateDirectory = $StateDirectory; summary = $summary; results = @($script:Results); actions = @($script:Actions); preMigrationStatePath = $StateJsonPath; postMigrationStatePath = $PostStatePath; rollbackPath = if ($script:RollbackCreated) { $RollbackPath } else { $null } }
     $report | ConvertTo-Json -Depth 15 | Set-Content -Path $ReportJsonPath -Encoding UTF8
     $html = @('<!doctype html><html><head><meta charset="utf-8"><title>Post-Migration Validation</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:2rem;color:#202124}h1{color:#174a7e}.PASS{color:#187a3d}.WARNING{color:#9a6700}.FAIL{color:#b42318}.EXPECTED_CHANGE{color:#176b87}table{border-collapse:collapse;width:100%;margin-bottom:1.5rem}th,td{border:1px solid #d0d7de;padding:.45rem;text-align:left;vertical-align:top}th{background:#eef2f6}.summary{padding:1rem;background:#f5f7fa;border-left:5px solid #174a7e}</style></head><body>'); $html += "<h1>Post-Migration Validation</h1><div class='summary'><strong>Overall result: <span class='$($summary.overallStatus)'>$($summary.overallStatus)</span></strong><br>Generated UTC: $($report.generatedAtUtc)<br>Mode: $Mode</div><h2>Summary counts</h2><table><tr><th>State</th><th>Count</th></tr>"; foreach ($key in $summary.counts.Keys) { $html += "<tr><td>$key</td><td>$($summary.counts[$key])</td></tr>" }; $html += '</table><h2>Results</h2><table><tr><th>State</th><th>Check</th><th>Summary</th><th>Details</th></tr>'; foreach ($item in $script:Results) { $html += "<tr><td class='$($item.state)'>$($item.state)</td><td>$($item.name)</td><td>$($item.summary)</td><td>$([System.Web.HttpUtility]::HtmlEncode(($item.details -join '<br>')))</td></tr>" }; $html += '</table><h2>Actions and manual follow-up</h2><pre>'; $html += [System.Web.HttpUtility]::HtmlEncode((@($script:Actions | ConvertTo-Json -Depth 10) -join "`r`n")); $html += '</pre></body></html>'; $html | Set-Content -Path $ReportHtmlPath -Encoding UTF8
-    $lines = @('Post-migration validation report', "Overall result: $($summary.overallStatus)", "Generated UTC: $($report.generatedAtUtc)", '', 'Summary counts:'); foreach ($key in $summary.counts.Keys) { $lines += ('  {0}: {1}' -f $key, $summary.counts[$key]) }; $lines += ''; foreach ($item in $script:Results) { $lines += "[$($item.state)] $($item.name): $($item.summary)"; foreach ($detail in $item.details) { $lines += "    $detail" } }; $lines += ''; $lines += 'Manual follow-up actions:'; $lines += $(if ($summary.manualActions.Count) { $summary.manualActions } else { '  None' }); $lines | Set-Content -Path $ReportTextPath -Encoding UTF8
+    
+    # Text report with deferred route restoration commands
+    $lines = @('Post-migration validation report', "Overall result: $($summary.overallStatus)", "Generated UTC: $($report.generatedAtUtc)", '', 'Summary counts:')
+    foreach ($key in $summary.counts.Keys) { $lines += ('  {0}: {1}' -f $key, $summary.counts[$key]) }
+    $lines += ''
+    foreach ($item in $script:Results) { $lines += "[$($item.state)] $($item.name): $($item.summary)"; foreach ($detail in $item.details) { $lines += "    $detail" } }
+    $lines += ''
+    $lines += 'Manual follow-up actions:'
+    $lines += $(if ($summary.manualActions.Count) { $summary.manualActions } else { '  None' })
+    
+    # Add deferred route restoration commands if any
+    $deferredRouteAction = @($script:Actions | Where-Object { $_.type -eq 'Static routes' -and $_.details.deferredRestoreCommands -and @($_.details.deferredRestoreCommands).Count -gt 0 } | Select-Object -First 1)
+    if ($deferredRouteAction) {
+        $lines += ''
+        $lines += 'DEFERRED ROUTE RESTORATION (execute after secondary NICs are configured):'
+        $lines += '=' * 80
+        $lines += @($deferredRouteAction.details.deferredRestoreCommands)
+        $lines += '=' * 80
+        $lines += 'Replace ''New-NetRoute'' adapter references as needed for your secondary NICs.'
+    }
+    
+    $lines | Set-Content -Path $ReportTextPath -Encoding UTF8
     Write-Log "Reports: $ReportJsonPath, $ReportHtmlPath, $ReportTextPath" ([ConsoleColor]::Cyan)
     return $summary
 }
@@ -1009,6 +1056,20 @@ try {
     if ($Mode -eq 'Full') { Remove-VMwareToolsUninstall }
     $summary = Write-Reports
     Write-Log "Overall result: $($summary.overallStatus)" (Get-StateColor $summary.overallStatus)
+    
+    # Display deferred route restoration commands to console if present
+    $deferredRouteAction = @($script:Actions | Where-Object { $_.type -eq 'Static routes' -and $_.details.deferredRestoreCommands -and @($_.details.deferredRestoreCommands).Count -gt 0 } | Select-Object -First 1)
+    if ($deferredRouteAction) {
+        Write-Host ''
+        Write-Host '═══════════════════════════════════════════════════════════════════════════════════' -ForegroundColor Cyan
+        Write-Host 'DEFERRED ROUTE RESTORATION (execute after secondary NICs are added to Proxmox):' -ForegroundColor Yellow
+        Write-Host '═══════════════════════════════════════════════════════════════════════════════════' -ForegroundColor Cyan
+        foreach ($cmd in @($deferredRouteAction.details.deferredRestoreCommands)) {
+            Write-Host $cmd -ForegroundColor White
+        }
+        Write-Host '═══════════════════════════════════════════════════════════════════════════════════' -ForegroundColor Cyan
+    }
+    
     if ($summary.overallStatus -eq 'FAIL') { exit 2 }; if ($summary.overallStatus -eq 'WARNING') { exit 1 }; exit 0
 } catch {
     if ($_.Exception.Message -eq 'RESTORE_FAILED_ROLLBACK_SAVED') { $null = Write-Reports; exit 40 }
