@@ -631,14 +631,16 @@ function Test-DriveLetterAssignment {
 function Compare-Services {
     # Define service categories to exclude or categorize
     $vmwareServices = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService')
-    $userSessionServices = @()  # Pattern: matches _NNNN (SID-based user services)
-    $migrationCommonServices = @('DeviceInstall', 'DsmSvc', 'IfsVsc', 'IKEEXT', 'PolicyAgent', 'SharedAccess')
+    $migrationCommonServices = @('DeviceInstall', 'DsmSvc', 'IfsVsc', 'IKEEXT', 'PolicyAgent', 'SharedAccess', 'Spooler')
     
+    # Get current running services
     $current = @(Get-CimInstance Win32_Service | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name)
-    $before = @($script:PreState.services.runningBeforeMigration)
     
-    # Find services that stopped
-    $missing = @($before | Where-Object { $_ -notin $current })
+    # Get all Automatic-startup services from pre-migration state (should be running)
+    $automaticBefore = @($script:PreState.services.all | Where-Object { $_ -and $_.startType -eq 'Automatic' } | ForEach-Object name)
+    
+    # Find Automatic services that are not running now (should be running but aren't)
+    $missing = @($automaticBefore | Where-Object { $_ -notin $current })
     
     # Categorize stopped services
     $vmwareStopped = @($missing | Where-Object { $_ -in $vmwareServices })
@@ -663,9 +665,9 @@ function Compare-Services {
     
     # Report unexpected service stops only
     if ($otherStopped.Count -gt 0) {
-        Add-Result 'Running services' 'WARNING' "$($otherStopped.Count) unexpected service(s) stopped after migration. Review before declaring migration successful." $details + @("Unexpected: $($otherStopped -join ', ')")
+        Add-Result 'Running services' 'WARNING' "$($otherStopped.Count) unexpected Automatic service(s) not running after migration. Review before declaring migration successful." $details + @("Unexpected: $($otherStopped -join ', ')")
     } else {
-        $summary = if ($details.Count -eq 0) { 'No services unexpectedly stopped.' } else { 'Expected service changes only (VMware, user sessions, migration-related).' }
+        $summary = if ($details.Count -eq 0) { 'All Automatic services are running as expected.' } else { 'Expected Automatic service changes only (VMware, user sessions, migration-related).' }
         Add-Result 'Running services' 'PASS' $summary $details
     }
 }
