@@ -163,6 +163,9 @@ Comprehensive readiness check. Called during ReadinessCheck phase.
 .\Test-MigrationReadiness.ps1 -CriticalSystemFreeSpaceGB 5
 ```
 
+**Service Health Check:**
+The script validates automatic services and reports stopped services as warnings. However, services with **"Automatic (Trigger Start)"** startup type are intentionally excluded from warnings because they are designed to remain stopped until needed (e.g., Remote Registry). Only truly unconditional "Automatic" services generate warnings if stopped.
+
 **Output:** `C:\Migration\Logs\MigrationReadiness.log` + JSON report
 
 ---
@@ -258,6 +261,27 @@ Domain Controller-specific health checks. Optional for DC migrations.
 .\Test-DCMigrationHealth.ps1 -Mode PreMigration    # Source VM
 .\Test-DCMigrationHealth.ps1 -Mode PostMigration   # Target VM
 ```
+
+---
+
+## Technical Updates
+
+### PowerShell 5.1 Compatibility (Recent Fix)
+
+All scripts have been validated for **PowerShell 5.1+** compatibility (Windows Server 2016+). Specifically:
+
+- **Restore-And-TestMigrationState.ps1**: Removed PowerShell 7+ null-coalescing operators (`??`) and replaced with PowerShell 5.1-compatible ternary expressions
+- All scripts avoid PowerShell 7+ specific syntax to ensure broad compatibility
+
+### Service Health Check Improvements
+
+**Test-MigrationReadiness.ps1** now intelligently excludes services designed to be stopped:
+
+- **Trigger-start services** (checked via `TriggerInfo` registry key) – Excluded from warnings
+- **Delayed-start services** – Excluded from warnings (by design, start after boot)
+- **Only unconditional Automatic services** that are stopped generate warnings
+
+This eliminates false positives for services like Remote Registry that use trigger-based startup.
 
 ---
 
