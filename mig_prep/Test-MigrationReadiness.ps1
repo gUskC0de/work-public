@@ -298,6 +298,8 @@ function Test-PendingReboot {
 function Test-ServiceHealth {
     Invoke-ReadOnlyCheck 'Windows service health' {
         $services = @(Get-CimInstance Win32_Service -Filter "StartMode='Auto' AND State<>'Running'" -ErrorAction Stop)
+        # Services managed by Task Scheduler that may be stopped until needed
+        $taskSchedulerManagedPatterns = @('GoogleUpdater*', 'GoogleUpdaterInternal*')
         $stopped = @($services | Where-Object {
             $serviceKey = $null
             $registry = $null
@@ -312,9 +314,18 @@ function Test-ServiceHealth {
                 if ($serviceKey) { $serviceKey.Dispose() }
                 if ($registry) { $registry.Dispose() }
             }
-            # Exclude delayed-start services and trigger-start services (both are designed to be stopped until needed)
+            # Check if service matches any task-scheduler-managed pattern
+            $isTaskSchedulerManaged = $false
+            foreach ($pattern in $taskSchedulerManagedPatterns) {
+                if ($_.Name -like $pattern) {
+                    $isTaskSchedulerManaged = $true
+                    break
+                }
+            }
+            # Exclude: delayed-start, trigger-start, or task-scheduler-managed services (all designed to be stopped until needed)
             [int]$delayed -ne 1 -and `
-            -not (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($_.Name)\TriggerInfo" -ErrorAction SilentlyContinue)
+            -not (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($_.Name)\TriggerInfo" -ErrorAction SilentlyContinue) -and `
+            -not $isTaskSchedulerManaged
         })
         $details = @($stopped | ForEach-Object { "$($_.Name): state=$($_.State), start=$($_.StartMode), display='$($_.DisplayName)'" })
         if ($services.Count -eq 0) { Add-CheckResult 'Windows service health' 'NOT_CHECKED' 'Automatic service state could not be enumerated.' | Out-Null }
