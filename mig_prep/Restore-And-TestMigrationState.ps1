@@ -659,7 +659,7 @@ function Compare-Services {
     
     # Find Automatic services that are not running (should be running but aren't)
     # Note: Win32_Service.StartMode returns 'Auto', 'Manual', 'Disabled', 'Boot', or 'System'
-    $automaticBefore = @($allServicesBefore | Where-Object { $_.startType -eq 'Auto' } | ForEach-Object name)
+    $automaticBefore = @($allServicesBefore | Where-Object { $_.startType -eq 'Auto' } | ForEach-Object { $_.name })
     $missing = @($automaticBefore | Where-Object { $_ -notin $current })
     
     if ($missing.Count -eq 0) {
