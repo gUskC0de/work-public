@@ -631,7 +631,7 @@ function Test-DriveLetterAssignment {
 function Compare-Services {
     # Define service categories to exclude or categorize
     $vmwareServices = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService', 'vdservice')
-    $migrationCommonServices = @('DeviceInstall', 'DsmSvc', 'IfsVsc', 'IKEEXT', 'PolicyAgent', 'SharedAccess', 'Spooler')
+    $migrationCommonServices = @('DeviceInstall', 'DsmSvc', 'IfsVsc', 'IKEEXT', 'PolicyAgent', 'SharedAccess')
     $taskSchedulerManagedPatterns = @('GoogleUpdater*', 'GoogleUpdaterInternal*')
     $qemuGuestServices = @('QEMU-GA', 'qemu-ga', 'spice-agent')
     

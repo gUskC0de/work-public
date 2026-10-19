@@ -275,13 +275,26 @@ All scripts have been validated for **PowerShell 5.1+** compatibility (Windows S
 
 ### Service Health Check Improvements
 
-**Test-MigrationReadiness.ps1** now intelligently excludes services designed to be stopped:
+**Test-MigrationReadiness.ps1** (pre-migration) and **Restore-And-TestMigrationState.ps1** (post-migration) now intelligently exclude services designed to be stopped:
 
-- **Trigger-start services** (checked via `TriggerInfo` registry key) – Excluded from warnings
+**Pre-Migration (Test-MigrationReadiness.ps1):**
+- **Trigger-start services** (checked via `TriggerInfo` registry key) – Excluded from warnings (e.g., Remote Registry)
 - **Delayed-start services** – Excluded from warnings (by design, start after boot)
+- **Task Scheduler managed** (GoogleUpdater*, etc.) – Excluded from warnings
 - **Only unconditional Automatic services** that are stopped generate warnings
 
-This eliminates false positives for services like Remote Registry that use trigger-based startup.
+**Post-Migration Service Comparison (Restore-And-TestMigrationState.ps1):**
+Validates that Automatic services captured before migration are still running after migration. Intelligently categorizes stopped services:
+- **VMware services** (VMTools, VGAuthService, vdservice, VM3DService) – Expected to be stopped, informational only
+- **User session services** (SID-based, e.g., EventSystem_1) – Expected to be stopped, informational only
+- **Migration-related services** (DeviceInstall, DsmSvc, IfsVsc, IKEEXT, PolicyAgent, SharedAccess) – Expected to be stopped, informational only
+- **QEMU guest services** (spice-agent, qemu-ga, QEMU-GA) – Expected to be stopped, informational only
+- **Trigger-start services** – Automatically excluded (via TriggerInfo registry check)
+- **Task Scheduler managed** (GoogleUpdater*, GoogleUpdaterInternal*) – Automatically excluded
+
+Only **truly unexpected** Automatic service stops generate a WARNING and require review.
+
+This eliminates false positives and focuses warnings on actual migration issues.
 
 ---
 
@@ -321,6 +334,10 @@ The restore script automatically maps the source VM's active NIC(s) to the Proxm
    - Automatic restoration applies the first active adapter
    - You must manually configure additional adapters using the exported configuration data
    - All adapter details are available for reference in the state files
+4. **No VirtIO adapter case:**
+   - Network restoration is gracefully skipped (no exit/failure)
+   - All other validation checks continue
+   - Useful in ValidateOnly mode or when manually handling network configuration
 
 **Exported data for multiple NICs includes:**
 - Adapter names, descriptions, and hardware addresses (MAC)
