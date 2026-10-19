@@ -630,8 +630,10 @@ function Test-DriveLetterAssignment {
 }
 function Compare-Services {
     # Define service categories to exclude or categorize
-    $vmwareServices = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService')
+    $vmwareServices = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService', 'vdservice')
     $migrationCommonServices = @('DeviceInstall', 'DsmSvc', 'IfsVsc', 'IKEEXT', 'PolicyAgent', 'SharedAccess', 'Spooler')
+    $taskSchedulerManagedPatterns = @('GoogleUpdater*', 'GoogleUpdaterInternal*')
+    $qemuGuestServices = @('QEMU-GA', 'qemu-ga', 'spice-agent')
     
     # Verify pre-migration service data is available
     if (-not $script:PreState -or -not $script:PreState.services) {
@@ -667,11 +669,38 @@ function Compare-Services {
         return
     }
     
-    # Categorize stopped services
+    # Filter out task-scheduler-managed services (e.g. GoogleUpdater*)
+    $isTaskSchedulerManaged = $false
+    $filtered = @()
+    foreach ($svc in $missing) {
+        $isTaskSchedulerManaged = $false
+        foreach ($pattern in $taskSchedulerManagedPatterns) {
+            if ($svc -like $pattern) { $isTaskSchedulerManaged = $true; break }
+        }
+        if (-not $isTaskSchedulerManaged) { $filtered += $svc }
+    }
+    $missing = $filtered
+    
+    # Filter out trigger-start services (those with TriggerInfo registry key)
+    $filtered = @()
+    foreach ($svc in $missing) {
+        if (-not (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$svc\TriggerInfo" -ErrorAction SilentlyContinue)) {
+            $filtered += $svc
+        }
+    }
+    $missing = $filtered
+    
+    if ($missing.Count -eq 0) {
+        Add-Result 'Running services' 'PASS' 'All Automatic services are running as expected.' @()
+        return
+    }
+    
+    # Categorize remaining stopped services
     $vmwareStopped = @($missing | Where-Object { $_ -in $vmwareServices })
     $userSessionStopped = @($missing | Where-Object { $_ -match '_\d+$' })
     $migrationCommonStopped = @($missing | Where-Object { $_ -in $migrationCommonServices })
-    $otherStopped = @($missing | Where-Object { $_ -notin $vmwareServices -and $_ -notmatch '_\d+$' -and $_ -notin $migrationCommonServices })
+    $qemuStopped = @($missing | Where-Object { $_ -in $qemuGuestServices })
+    $otherStopped = @($missing | Where-Object { $_ -notin $vmwareServices -and $_ -notmatch '_\d+$' -and $_ -notin $migrationCommonServices -and $_ -notin $qemuGuestServices })
     
     # Report by category
     $details = @()
@@ -688,13 +717,17 @@ function Compare-Services {
         $details += "Migration-related services stopped (expected): $($migrationCommonStopped -join ', ')"
     }
     
+    if ($qemuStopped.Count -gt 0) {
+        $details += "QEMU guest services stopped (expected): $($qemuStopped -join ', ')"
+    }
+    
     # Report unexpected service stops only
     if ($otherStopped.Count -gt 0) {
         $reportDetails = @($details)
         $reportDetails += "Unexpected: $($otherStopped -join ', ')"
         Add-Result 'Running services' 'WARNING' "$($otherStopped.Count) unexpected Automatic service(s) not running after migration. Review before declaring migration successful." $reportDetails
     } else {
-        $summary = if ($details.Count -eq 0) { 'All Automatic services are running as expected.' } else { 'Expected Automatic service changes only (VMware, user sessions, migration-related).' }
+        $summary = if ($details.Count -eq 0) { 'All Automatic services are running as expected.' } else { 'Expected Automatic service changes only (VMware, user sessions, migration-related, QEMU guest services).' }
         Add-Result 'Running services' 'PASS' $summary $details
     }
 }
