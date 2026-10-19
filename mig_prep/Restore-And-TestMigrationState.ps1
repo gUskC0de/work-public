@@ -636,7 +636,6 @@ function Compare-Services {
     # Verify pre-migration service data is available
     if (-not $script:PreState -or -not $script:PreState.services) {
         Add-Result 'Running services' 'NOT_CHECKED' 'Pre-migration service data is unavailable; service comparison cannot be performed.'
-        Write-Log 'DEBUG: PreState.services is missing' ([ConsoleColor]::Yellow)
         return
     }
     
@@ -645,31 +644,22 @@ function Compare-Services {
         $current = @(Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name)
     } catch {
         Add-Result 'Running services' 'NOT_CHECKED' 'Current service state could not be retrieved.'
-        Write-Log "DEBUG: Error getting current services: $($_.Exception.Message)" ([ConsoleColor]::Yellow)
         return
     }
-    
-    Write-Log "DEBUG: Found $($current.Count) currently running services" ([ConsoleColor]::DarkCyan)
     
     # Get all services from pre-migration state (all captured services with their start types)
     $allServicesBefore = @($script:PreState.services.all | Where-Object { $_ -and $_.startType } | ForEach-Object { 
         [pscustomobject]@{ name = $_.name; startType = $_.startType }
     })
     
-    Write-Log "DEBUG: Found $($allServicesBefore.Count) services in pre-migration capture" ([ConsoleColor]::DarkCyan)
-    
     if ($allServicesBefore.Count -eq 0) {
         Add-Result 'Running services' 'NOT_CHECKED' 'Pre-migration service list is empty; service comparison cannot be performed.'
-        Write-Log 'DEBUG: Pre-migration service list is empty' ([ConsoleColor]::Yellow)
         return
     }
     
     # Find Automatic services that are not running (should be running but aren't)
     $automaticBefore = @($allServicesBefore | Where-Object { $_.startType -eq 'Automatic' } | ForEach-Object name)
-    Write-Log "DEBUG: Found $($automaticBefore.Count) Automatic services in pre-migration state" ([ConsoleColor]::DarkCyan)
-    
     $missing = @($automaticBefore | Where-Object { $_ -notin $current })
-    Write-Log "DEBUG: Found $($missing.Count) Automatic services not running now: $($missing -join ', ')" ([ConsoleColor]::DarkCyan)
     
     if ($missing.Count -eq 0) {
         Add-Result 'Running services' 'PASS' 'All Automatic services are running as expected.' @()
@@ -1080,9 +1070,13 @@ try {
     Invoke-SafePart 'Drive letter assignment' { Test-DriveLetterAssignment }
     Report-ManualNetworkHandling
     $mapping = Resolve-AdapterMapping
-    if (-not $mapping) { $null = Write-Reports; exit 30 }
+    if (-not $mapping) {
+        if ($Mode -eq 'ApplyNetwork' -or $Mode -eq 'Full') {
+            Add-Result 'Network restoration' 'WARNING' 'No suitable VirtIO adapter found; network restoration will be skipped. Manual network configuration may be required.'
+        }
+    }
     if ($Mode -eq 'ValidateOnly') { Add-Result 'Mode' 'PASS' 'Validation-only mode selected; no network changes were requested.' }
-    if ($Mode -eq 'ApplyNetwork' -or $Mode -eq 'Full') { Restore-Network $mapping }
+    if (($Mode -eq 'ApplyNetwork' -or $Mode -eq 'Full') -and $mapping) { Restore-Network $mapping }
     $script:CurrentNetwork = Get-CurrentNetworkState
     $postState = Get-PostMigrationState
     $postState | ConvertTo-Json -Depth 12 | Set-Content -Path $PostStatePath -Encoding UTF8
