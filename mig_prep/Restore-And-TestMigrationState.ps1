@@ -556,24 +556,28 @@ function Test-DriveLetterAssignment {
             })
             
             if ($matched.Count -eq 0) {
-                $unmatchedExpected += "$($expected.driveLetter) (label='$($expected.volumeLabel ?? '(no label)')', fs=$($expected.fileSystem), size=$([math]::Round($expected.partitionSizeBytes / 1GB, 2))GB)"
+                $volumeLabel = if ($expected.volumeLabel) { $expected.volumeLabel } else { '(no label)' }
+                $unmatchedExpected += "$($expected.driveLetter) (label='$volumeLabel', fs=$($expected.fileSystem), size=$([math]::Round($expected.partitionSizeBytes / 1GB, 2))GB)"
             }
             elseif ($matched.Count -eq 1) {
                 # Single match found - verify drive letter
                 $current = $matched[0]
                 if ($current.driveLetter -ne $expected.driveLetter) {
-                    $driveMismatches += "Volume '$($expected.volumeLabel ?? '(no label)')' expected on drive $($expected.driveLetter) but found on $($current.driveLetter ?? '(no drive letter)')"
+                    $expLabel = if ($expected.volumeLabel) { $expected.volumeLabel } else { '(no label)' }
+                    $currLetter = if ($current.driveLetter) { $current.driveLetter } else { '(no drive letter)' }
+                    $driveMismatches += "Volume '$expLabel' expected on drive $($expected.driveLetter) but found on $currLetter"
                 }
             }
             else {
                 # Multiple matches - ambiguous
-                $driveMismatches += "Volume '$($expected.volumeLabel ?? '(no label)')' on $($expected.driveLetter) matches $($matched.Count) current partitions; cannot determine correct assignment."
+                $volumeLabel = if ($expected.volumeLabel) { $expected.volumeLabel } else { '(no label)' }
+                $driveMismatches += "Volume '$volumeLabel' on $($expected.driveLetter) matches $($matched.Count) current partitions; cannot determine correct assignment."
             }
         }
         
         # Report results
         if ($driveMismatches.Count -eq 0 -and $unmatchedExpected.Count -eq 0) {
-            $details = @($expectedPartitions | ForEach-Object { "$($_.driveLetter): $($_.volumeLabel ?? '(no label)') ($($_.fileSystem))" })
+            $details = @($expectedPartitions | ForEach-Object { $label = if ($_.volumeLabel) { $_.volumeLabel } else { '(no label)' }; "$($_.driveLetter): $label ($($_.fileSystem))" })
             Add-Result 'Drive letter assignment' 'PASS' 'All drive letters match pre-migration state.' $details
         }
         else {
