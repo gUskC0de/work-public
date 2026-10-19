@@ -1050,9 +1050,10 @@ try {
     $script:CurrentNetwork = Get-CurrentNetworkState
     $postState = Get-PostMigrationState
     $postState | ConvertTo-Json -Depth 12 | Set-Content -Path $PostStatePath -Encoding UTF8
-    # TODO: All comparison functions have parameter binding issues with nested arrays - will revisit
-    <# Compare-SystemState; Compare-NetworkState; Compare-DiskState; Compare-Services; Compare-Collections; Test-FilesystemAndEvents; Test-Connectivity; Test-QemuAgentAndVMwareTools #>
-    Add-Result 'Comparison tests' 'NOT_CHECKED' 'State comparison tests temporarily disabled due to parameter binding issues.'
+    # TODO: Comparison functions for network, disk, filesystem, and connectivity have parameter binding issues with nested arrays - will revisit
+    Compare-Services
+    <# Compare-SystemState; Compare-NetworkState; Compare-DiskState; Compare-Collections; Test-FilesystemAndEvents; Test-Connectivity; Test-QemuAgentAndVMwareTools #>
+    Add-Result 'Comparison tests' 'NOT_CHECKED' 'State comparison tests for SystemState, NetworkState, DiskState, Collections, Filesystem, Events, and Connectivity temporarily disabled due to parameter binding issues.'
     if ($Mode -eq 'Full') { Remove-VMwareToolsUninstall }
     $summary = Write-Reports
     Write-Log "Overall result: $($summary.overallStatus)" (Get-StateColor $summary.overallStatus)
