@@ -557,7 +557,10 @@ function Test-DriveLetterAssignment {
             
             if ($matched.Count -eq 0) {
                 $volumeLabel = if ($expected.volumeLabel) { $expected.volumeLabel } else { '(no label)' }
-                $unmatchedExpected += "$($expected.driveLetter) (label='$volumeLabel', fs=$($expected.fileSystem), size=$([math]::Round($expected.partitionSizeBytes / 1GB, 2))GB)"
+                $driveLtr = $expected.driveLetter
+                $fileSystem = $expected.fileSystem
+                $sizeGB = [math]::Round($expected.partitionSizeBytes / 1GB, 2)
+                $unmatchedExpected += "$driveLtr (label='$volumeLabel', fs=$fileSystem, size=${sizeGB}GB)"
             }
             elseif ($matched.Count -eq 1) {
                 # Single match found - verify drive letter
@@ -565,19 +568,27 @@ function Test-DriveLetterAssignment {
                 if ($current.driveLetter -ne $expected.driveLetter) {
                     $expLabel = if ($expected.volumeLabel) { $expected.volumeLabel } else { '(no label)' }
                     $currLetter = if ($current.driveLetter) { $current.driveLetter } else { '(no drive letter)' }
-                    $driveMismatches += "Volume '$expLabel' expected on drive $($expected.driveLetter) but found on $currLetter"
+                    $expDriveLtr = $expected.driveLetter
+                    $driveMismatches += "Volume '$expLabel' expected on drive $expDriveLtr but found on $currLetter"
                 }
             }
             else {
                 # Multiple matches - ambiguous
                 $volumeLabel = if ($expected.volumeLabel) { $expected.volumeLabel } else { '(no label)' }
-                $driveMismatches += "Volume '$volumeLabel' on $($expected.driveLetter) matches $($matched.Count) current partitions; cannot determine correct assignment."
+                $expDriveLtr = $expected.driveLetter
+                $matchCount = $matched.Count
+                $driveMismatches += "Volume '$volumeLabel' on $expDriveLtr matches $matchCount current partitions; cannot determine correct assignment."
             }
         }
         
         # Report results
         if ($driveMismatches.Count -eq 0 -and $unmatchedExpected.Count -eq 0) {
-            $details = @($expectedPartitions | ForEach-Object { $label = if ($_.volumeLabel) { $_.volumeLabel } else { '(no label)' }; "$($_.driveLetter): $label ($($_.fileSystem))" })
+            $details = @($expectedPartitions | ForEach-Object { 
+                $label = if ($_.volumeLabel) { $_.volumeLabel } else { '(no label)' }
+                $driveLtr = $_.driveLetter
+                $fileSystem = $_.fileSystem
+                "$driveLtr: $label ($fileSystem)"
+            })
             Add-Result 'Drive letter assignment' 'PASS' 'All drive letters match pre-migration state.' $details
         }
         else {
@@ -847,7 +858,7 @@ function Remove-VMwareToolsUninstall {
                     # Exit codes: 0 = success, 1072 = service not found (also ok)
                     Write-Log "Deleted service: $svc" ([ConsoleColor]::Green)
                 } else {
-                    Write-Log "Service $svc: exit code $scExitCode" ([ConsoleColor]::Gray)
+                    Write-Log "Service ${svc}: exit code $scExitCode" ([ConsoleColor]::Gray)
                 }
             }
             
