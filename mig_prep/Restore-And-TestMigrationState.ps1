@@ -690,7 +690,9 @@ function Compare-Services {
     
     # Report unexpected service stops only
     if ($otherStopped.Count -gt 0) {
-        Add-Result 'Running services' 'WARNING' "$($otherStopped.Count) unexpected Automatic service(s) not running after migration. Review before declaring migration successful." $details + @("Unexpected: $($otherStopped -join ', ')")
+        $reportDetails = @($details)
+        $reportDetails += "Unexpected: $($otherStopped -join ', ')"
+        Add-Result 'Running services' 'WARNING' "$($otherStopped.Count) unexpected Automatic service(s) not running after migration. Review before declaring migration successful." $reportDetails
     } else {
         $summary = if ($details.Count -eq 0) { 'All Automatic services are running as expected.' } else { 'Expected Automatic service changes only (VMware, user sessions, migration-related).' }
         Add-Result 'Running services' 'PASS' $summary $details
