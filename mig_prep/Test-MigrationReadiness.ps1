@@ -311,7 +311,9 @@ function Test-ServiceHealth {
                 if ($serviceKey) { $serviceKey.Dispose() }
                 if ($registry) { $registry.Dispose() }
             }
-            [int]$delayed -ne 1
+            # Exclude delayed-start services and trigger-start services (both are designed to be stopped until needed)
+            [int]$delayed -ne 1 -and `
+            -not (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($_.Name)\TriggerInfo" -ErrorAction SilentlyContinue)
         })
         $details = @($stopped | ForEach-Object { "$($_.Name): state=$($_.State), start=$($_.StartMode), display='$($_.DisplayName)'" })
         if ($services.Count -eq 0) { Add-CheckResult 'Windows service health' 'NOT_CHECKED' 'Automatic service state could not be enumerated.' | Out-Null }

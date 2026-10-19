@@ -514,6 +514,79 @@ function Get-PartitionVolumeStateForComparison {
     # $volume is $null for partitions with no accessible volume (e.g. Recovery, EFI, MSR).
     $output = @(); foreach ($partition in @(Get-Partition -ErrorAction SilentlyContinue)) { $volume = $null; try { $volume = $partition | Get-Volume -ErrorAction Stop } catch { }; $output += "$(if ($volume) { $volume.DriveLetter }else{$null})|$(if ($volume) { $volume.FileSystemLabel }else{$null})|$(if ($volume) { $volume.FileSystem }else{$null})|$(if ($volume) { $volume.Path }else{$null})" }; return @($output)
 }
+function Test-DriveLetterAssignment {
+    <#
+    .SYNOPSIS
+        Verifies that partitions maintain their drive letter assignments after migration.
+        Matches partitions by volume label, file system, and size to handle disk reordering.
+    #>
+    try {
+        # Get pre-migration partitions with drive letters
+        $expectedPartitions = @($script:PreState.partitionsAndVolumes | Where-Object { $_.driveLetter })
+        
+        if ($expectedPartitions.Count -eq 0) {
+            Add-Result 'Drive letter assignment' 'PASS' 'No pre-migration partitions with drive letters found.'
+            return
+        }
+        
+        # Get current partitions
+        $currentPartitions = @(Get-Partition -ErrorAction SilentlyContinue | ForEach-Object {
+            $volume = $null
+            try { $volume = $_ | Get-Volume -ErrorAction Stop } catch { }
+            [pscustomobject][ordered]@{
+                partition = $_
+                volume = $volume
+                driveLetter = if ($volume) { $volume.DriveLetter } else { $null }
+                volumeLabel = if ($volume) { $volume.FileSystemLabel } else { $null }
+                fileSystem = if ($volume) { $volume.FileSystem } else { $null }
+                partitionSize = $_.Size
+            }
+        })
+        
+        $driveMismatches = @()
+        $unmatchedExpected = @()
+        
+        # Match each expected partition and verify drive letter
+        foreach ($expected in $expectedPartitions) {
+            # Match by: volume label (both null or same), file system, and partition size (within 1GB)
+            $matched = @($currentPartitions | Where-Object {
+                $_.volumeLabel -eq $expected.volumeLabel -and `
+                $_.fileSystem -eq $expected.fileSystem -and `
+                [math]::Abs($_.partitionSize - $expected.partitionSizeBytes) -lt 1GB
+            })
+            
+            if ($matched.Count -eq 0) {
+                $unmatchedExpected += "$($expected.driveLetter) (label='$($expected.volumeLabel ?? '(no label)')', fs=$($expected.fileSystem), size=$([math]::Round($expected.partitionSizeBytes / 1GB, 2))GB)"
+            }
+            elseif ($matched.Count -eq 1) {
+                # Single match found - verify drive letter
+                $current = $matched[0]
+                if ($current.driveLetter -ne $expected.driveLetter) {
+                    $driveMismatches += "Volume '$($expected.volumeLabel ?? '(no label)')' expected on drive $($expected.driveLetter) but found on $($current.driveLetter ?? '(no drive letter)')"
+                }
+            }
+            else {
+                # Multiple matches - ambiguous
+                $driveMismatches += "Volume '$($expected.volumeLabel ?? '(no label)')' on $($expected.driveLetter) matches $($matched.Count) current partitions; cannot determine correct assignment."
+            }
+        }
+        
+        # Report results
+        if ($driveMismatches.Count -eq 0 -and $unmatchedExpected.Count -eq 0) {
+            $details = @($expectedPartitions | ForEach-Object { "$($_.driveLetter): $($_.volumeLabel ?? '(no label)') ($($_.fileSystem))" })
+            Add-Result 'Drive letter assignment' 'PASS' 'All drive letters match pre-migration state.' $details
+        }
+        else {
+            $allIssues = @()
+            if ($driveMismatches.Count -gt 0) { $allIssues += $driveMismatches }
+            if ($unmatchedExpected.Count -gt 0) { $allIssues += "Missing or unmatched partitions: $($unmatchedExpected -join '; ')" }
+            Add-Result 'Drive letter assignment' 'FAIL' 'Drive letter assignment differs from pre-migration state.' $allIssues
+        }
+    }
+    catch {
+        Add-Result 'Drive letter assignment' 'NOT_CHECKED' 'Could not verify drive letter assignment.' -FailureMessage $_.Exception.Message
+    }
+}
 function Compare-Services {
     # Define service categories to exclude or categorize
     $vmwareServices = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService')
@@ -906,6 +979,7 @@ try {
     if (-not (Test-CaptureCompleteness)) { $null = Write-Reports; exit 20 }
     if (-not (Test-ComputerIdentity)) { $null = Write-Reports; exit 20 }
     Invoke-SafePart 'Disk online state' { Repair-OfflineDisks }
+    Invoke-SafePart 'Drive letter assignment' { Test-DriveLetterAssignment }
     Report-ManualNetworkHandling
     $mapping = Resolve-AdapterMapping
     if (-not $mapping) { $null = Write-Reports; exit 30 }

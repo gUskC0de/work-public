@@ -142,6 +142,26 @@ function Get-ServerTypeSelection {
     } while ($true)
 }
 
+function Test-IsLocalAdmin {
+    <#
+    .SYNOPSIS
+        Verifies that the current user is a member of the local Administrators group.
+        Only local admin accounts will work post-migration when network is unavailable.
+    #>
+    try {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+        
+        # Local Administrators group SID (S-1-5-32-544) - works with any local admin account name
+        $localAdminSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+        
+        return $principal.IsInRole($localAdminSid)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Invoke-ReadinessCheck {
     Write-Status "Starting ReadinessCheck phase..." 'INFO'
     
@@ -152,6 +172,12 @@ function Invoke-ReadinessCheck {
     }
     
     Write-Status "Server type: $serverType" 'INFO'
+    
+    if ($serverType -eq 'Normal' -and -not (Test-IsLocalAdmin)) {
+        Write-Status "Error: This script must run as a LOCAL administrator account (e.g., COMPUTERNAME\Administrator or COMPUTERNAME\LocalAdmin). Domain administrator accounts will not work after migration when the network is unavailable." 'ERROR'
+        return
+    }
+    
     Write-Status "Running Test-MigrationReadiness..." 'INFO'
     
     $testReadinessPath = Join-Path $PSScriptRoot 'Test-MigrationReadiness.ps1'
@@ -261,6 +287,12 @@ function Invoke-ValidatePost {
     }
     
     Write-Status "Server type: $serverType" 'INFO'
+    
+    if ($serverType -eq 'Normal' -and -not (Test-IsLocalAdmin)) {
+        Write-Status "Error: This script must run as a LOCAL administrator account (e.g., COMPUTERNAME\Administrator or COMPUTERNAME\LocalAdmin). Domain administrator accounts will not work after migration when the network is unavailable." 'ERROR'
+        return
+    }
+    
     Write-Status "Running Restore-And-TestMigrationState..." 'INFO'
     
     $restoreStatePath = Join-Path $PSScriptRoot 'Restore-And-TestMigrationState.ps1'
