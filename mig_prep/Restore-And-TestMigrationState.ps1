@@ -633,14 +633,48 @@ function Compare-Services {
     $vmwareServices = @('VMTools', 'VGAuthService', 'VMVss', 'VM3DService')
     $migrationCommonServices = @('DeviceInstall', 'DsmSvc', 'IfsVsc', 'IKEEXT', 'PolicyAgent', 'SharedAccess', 'Spooler')
     
+    # Verify pre-migration service data is available
+    if (-not $script:PreState -or -not $script:PreState.services) {
+        Add-Result 'Running services' 'NOT_CHECKED' 'Pre-migration service data is unavailable; service comparison cannot be performed.'
+        Write-Log 'DEBUG: PreState.services is missing' ([ConsoleColor]::Yellow)
+        return
+    }
+    
     # Get current running services
-    $current = @(Get-CimInstance Win32_Service | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name)
+    try {
+        $current = @(Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object { $_ -and $_.State -eq 'Running' } | ForEach-Object Name)
+    } catch {
+        Add-Result 'Running services' 'NOT_CHECKED' 'Current service state could not be retrieved.'
+        Write-Log "DEBUG: Error getting current services: $($_.Exception.Message)" ([ConsoleColor]::Yellow)
+        return
+    }
     
-    # Get all Automatic-startup services from pre-migration state (should be running)
-    $automaticBefore = @($script:PreState.services.all | Where-Object { $_ -and $_.startType -eq 'Automatic' } | ForEach-Object name)
+    Write-Log "DEBUG: Found $($current.Count) currently running services" ([ConsoleColor]::DarkCyan)
     
-    # Find Automatic services that are not running now (should be running but aren't)
+    # Get all services from pre-migration state (all captured services with their start types)
+    $allServicesBefore = @($script:PreState.services.all | Where-Object { $_ -and $_.startType } | ForEach-Object { 
+        [pscustomobject]@{ name = $_.name; startType = $_.startType }
+    })
+    
+    Write-Log "DEBUG: Found $($allServicesBefore.Count) services in pre-migration capture" ([ConsoleColor]::DarkCyan)
+    
+    if ($allServicesBefore.Count -eq 0) {
+        Add-Result 'Running services' 'NOT_CHECKED' 'Pre-migration service list is empty; service comparison cannot be performed.'
+        Write-Log 'DEBUG: Pre-migration service list is empty' ([ConsoleColor]::Yellow)
+        return
+    }
+    
+    # Find Automatic services that are not running (should be running but aren't)
+    $automaticBefore = @($allServicesBefore | Where-Object { $_.startType -eq 'Automatic' } | ForEach-Object name)
+    Write-Log "DEBUG: Found $($automaticBefore.Count) Automatic services in pre-migration state" ([ConsoleColor]::DarkCyan)
+    
     $missing = @($automaticBefore | Where-Object { $_ -notin $current })
+    Write-Log "DEBUG: Found $($missing.Count) Automatic services not running now: $($missing -join ', ')" ([ConsoleColor]::DarkCyan)
+    
+    if ($missing.Count -eq 0) {
+        Add-Result 'Running services' 'PASS' 'All Automatic services are running as expected.' @()
+        return
+    }
     
     # Categorize stopped services
     $vmwareStopped = @($missing | Where-Object { $_ -in $vmwareServices })
