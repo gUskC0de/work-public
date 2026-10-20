@@ -230,11 +230,34 @@ function Get-RemoteServiceStatus {
 function ConvertFrom-DcDiagOutput {
     <# Parses raw dcdiag text into Passed/Failed plus the list of failed test names. dcdiag's
        'failed test'/'passed test' strings are localized on non-English OS builds; if neither
-       marker is recognized at all, this reports Warning instead of silently assuming Passed. #>
+       marker is recognized at all, this reports Warning instead of silently assuming Passed.
+       Services test failures are filtered: only unexpected service stops generate Failed status. #>
     param([Parameter(Mandatory)][string]$RawOutput)
+    
+    # List of DC services acceptable to be stopped post-migration
+    $acceptableStoppedServices = @('IsmServ')
+    
     $failedTests = @([regex]::Matches($RawOutput, '(?im)failed test\s+(\S+)') |
         ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+    
     if ($failedTests.Count -gt 0) {
+        # If only Services test failed, check if all failures are acceptable
+        if ($failedTests -eq 'Services') {
+            # Extract stopped service names from lines like "ServiceName Service is stopped on [DCNAME]"
+            $stoppedServices = @([regex]::Matches($RawOutput, '(?im)^\s*(\w+)\s+Service is stopped on') |
+                ForEach-Object { $_.Groups[1].Value })
+            
+            if ($stoppedServices.Count -gt 0) {
+                # Check if all stopped services are in acceptable list
+                $unexpectedServices = @($stoppedServices | Where-Object { $_ -notin $acceptableStoppedServices })
+                if ($unexpectedServices.Count -eq 0) {
+                    # All failures are acceptable
+                    return New-CheckResult -Name 'DCDiag' -Status 'Passed' -Detail "No unexpected service failures (stopped: $($stoppedServices -join ', '))"
+                }
+                # Report only unexpected services
+                return New-CheckResult -Name 'DCDiag' -Status 'Failed' -Detail ("Unexpected stopped service(s): {0}" -f ($unexpectedServices -join ', '))
+            }
+        }
         return New-CheckResult -Name 'DCDiag' -Status 'Failed' -Detail ("Failed test(s): {0}" -f ($failedTests -join ', '))
     }
     if ($RawOutput -notmatch '(?im)\bpassed test\b|\bfailed test\b') {
