@@ -1,0 +1,17 @@
+# macOS metadata
+.DS_Store
+._*
+
+# Windows Explorer metadata
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Python bytecode from development tools
+__pycache__/
+*.py[cod]
+
+# Editor temporary files
+*.swp
+*.swo
+*~
