@@ -98,11 +98,13 @@ function Show-MainMenu {
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
     Write-Host "  VMware-to-Proxmox Migration Orchestration" -ForegroundColor Cyan
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-    Write-Host "`n  Select a migration phase:`n"
+    Write-Host ="
+  Select a migration phase:\n"
     Write-Host "  1) ReadinessCheck   - Pre-migration validation and preparation checks" -ForegroundColor Green
     Write-Host "  2) Prepare          - Install VirtIO drivers and capture system state" -ForegroundColor Green
     Write-Host "  3) ValidatePost     - Validate and restore network after migration" -ForegroundColor Green
-    Write-Host "  4) Exit" -ForegroundColor Gray
+    Write-Host "  4) Clean VMware Tools - Remove VMware Tools from system" -ForegroundColor Green
+    Write-Host "  5) Exit" -ForegroundColor Gray
     Write-Host "`n"
 }
 
@@ -123,8 +125,9 @@ function Get-PhaseSelection {
             '1' { return 'ReadinessCheck' }
             '2' { return 'Prepare' }
             '3' { return 'ValidatePost' }
-            '4' { Write-Status "Exiting." 'INFO'; exit 0 }
-            default { Write-Status "Invalid selection. Please enter 1, 2, 3, or 4." 'WARNING' }
+            '4' { return 'CleanVMwareTools' }
+            '5' { Write-Status "Exiting." 'INFO'; exit 0 }
+            default { Write-Status "Invalid selection. Please enter 1, 2, 3, 4, or 5." 'WARNING' }
         }
     } while ($true)
 }
@@ -331,6 +334,26 @@ function Invoke-ValidatePost {
     Write-Status "ValidatePost phase completed." 'SUCCESS'
 }
 
+function Invoke-CleanVMwareTools {
+    Write-Status "Starting CleanVMwareTools phase..." 'INFO'
+    
+    $cleanToolsPath = Join-Path $PSScriptRoot 'Clean-VMwareTools.ps1'
+    if (-not (Test-Path $cleanToolsPath)) {
+        Write-Status "Error: Clean-VMwareTools.ps1 not found at $cleanToolsPath" 'ERROR'
+        return
+    }
+    
+    Write-Status "Running Clean-VMwareTools..." 'INFO'
+    & $cleanToolsPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "Clean-VMwareTools completed with warnings or errors (exit code: $LASTEXITCODE)." 'WARNING'
+    } else {
+        Write-Status "Clean-VMwareTools completed successfully." 'SUCCESS'
+    }
+    
+    Write-Status "CleanVMwareTools phase completed." 'SUCCESS'
+}
+
 try {
     Write-Status "Migration Orchestration Script Started" 'INFO'
     
@@ -344,6 +367,7 @@ try {
         'ReadinessCheck' { Invoke-ReadinessCheck }
         'Prepare' { Invoke-Prepare }
         'ValidatePost' { Invoke-ValidatePost }
+        'CleanVMwareTools' { Invoke-CleanVMwareTools }
         default { Write-Status "Unknown phase: $Phase" 'ERROR'; exit 1 }
     }
     

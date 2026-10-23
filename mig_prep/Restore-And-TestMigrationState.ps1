@@ -51,7 +51,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [string]$StateDirectory = '',
-    [ValidateSet('ValidateOnly', 'ApplyNetwork', 'CompareOnly', 'Full', 'VmwareUninstall')]
+    [ValidateSet('ValidateOnly', 'ApplyNetwork', 'CompareOnly', 'Full')]
     [string]$Mode = 'ValidateOnly',
     [switch]$Force,
     [string]$DnsTestHost = '',
@@ -1090,14 +1090,7 @@ try {
     $script:LogWriter = New-Object System.IO.StreamWriter($LogPath, $false, [Text.Encoding]::UTF8)
     Write-Log "Starting post-migration validation in $Mode mode (code revision $CodeRevision)." ([ConsoleColor]::Cyan)
     if (-not (Test-Administrator)) { $null = Write-Reports; exit 10 }
-    # VmwareUninstall mode skips all validation and only uninstalls VMware Tools
-    if ($Mode -eq 'VmwareUninstall') {
-        Write-Log 'VmwareUninstall mode: Skipping validation, uninstalling VMware Tools only.' ([ConsoleColor]::Cyan)
-        Remove-VMwareToolsUninstall
-        $summary = Write-Reports
-        Write-Log "Overall result: $($summary.overallStatus)" (Get-StateColor $summary.overallStatus)
-        if ($summary.overallStatus -eq 'FAIL') { exit 2 }; if ($summary.overallStatus -eq 'WARNING') { exit 1 }; exit 0
-    }
+    # VmwareUninstall mode has been removed. Use Clean-VMwareTools.ps1 via Migrate-VmwareToProxmox.ps1 instead.
     
     if (-not (Test-InputData)) { $null = Write-Reports; exit 20 }
     if (-not (Test-CaptureCompleteness)) { $null = Write-Reports; exit 20 }
@@ -1120,7 +1113,6 @@ try {
     Compare-Services
     <# Compare-SystemState; Compare-NetworkState; Compare-DiskState; Compare-Collections; Test-FilesystemAndEvents; Test-Connectivity; Test-QemuAgentAndVMwareTools #>
     Add-Result 'Comparison tests' 'NOT_CHECKED' 'State comparison tests for SystemState, NetworkState, DiskState, Collections, Filesystem, Events, and Connectivity temporarily disabled due to parameter binding issues.'
-    if ($Mode -eq 'Full') { Remove-VMwareToolsUninstall }
     $summary = Write-Reports
     Write-Log "Overall result: $($summary.overallStatus)" (Get-StateColor $summary.overallStatus)
     
