@@ -12,24 +12,29 @@
     - Checks both 64-bit and 32-bit registry paths
     - Stops and deletes VMware services
     - Auto-discovers VMware Tools registry key
-    - Optionally reboots the system
+    - Manual reboot required after cleanup
+    - Optional VerifyOnly mode to check artifacts without cleanup
 
 .PARAMETER Force
     Skip confirmation prompts and proceed with cleanup.
 
-.PARAMETER NoReboot
-    Do not reboot after cleanup. Default is to prompt for reboot.
+.PARAMETER VerifyOnly
+    Read-only mode: Check what VMware artifacts remain without performing any cleanup or reboot.
 
 .PARAMETER RegistryPath
     Registry path to VMware Tools entry. Default: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{298083DA-1DC8-4886-97DD-333954302E68}
 
 .EXAMPLE
     .\Clean-VMwareTools.ps1
-    # Interactive cleanup with reboot prompt
+    # Interactive cleanup with manual reboot
 
 .EXAMPLE
-    .\Clean-VMwareTools.ps1 -Force -NoReboot
-    # Automatic cleanup without reboot
+    .\Clean-VMwareTools.ps1 -Force
+    # Automatic cleanup without prompts
+
+.EXAMPLE
+    .\Clean-VMwareTools.ps1 -VerifyOnly
+    # Check what VMware artifacts remain (read-only)
 
 .NOTES
     Must be run as Administrator.
@@ -40,7 +45,7 @@
 [CmdletBinding()]
 param(
     [switch]$Force,
-    [switch]$NoReboot,
+    [switch]$VerifyOnly,
     [string]$RegistryPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{298083DA-1DC8-4886-97DD-333954302E68}',
     [string]$ExportPath = (Join-Path (Split-Path $PSScriptRoot) 'Migration-Export')
 )
@@ -141,32 +146,33 @@ try {
     # Initialize timestamp for export files
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 
-    # Step 1: Check registry entry exists, discover if needed
-    Write-Status 'Checking for VMware Tools registry entry...'
+    # Step 1: Check registry and setup (skip in VerifyOnly mode)
+    if (-not $VerifyOnly) {
+        Write-Status 'Checking for VMware Tools registry entry...'
     
-    if (-not (Test-Path -LiteralPath $RegistryPath)) {
-        Write-Status "Default key not found at $RegistryPath" 'Warning'
-        $discoveredPath = Discover-VMwareToolsKey
+    if (-not $VerifyOnly) {
+            Write-Status "Default key not found at $RegistryPath" 'Warning'
+            $discoveredPath = Discover-VMwareToolsKey
+            
+            if ($discoveredPath) {
+                $RegistryPath = $discoveredPath
+            } else {
+                Write-Status 'No VMware Tools registry entry found. Already cleaned?' 'Error'
+                exit 1
+            }
+        }
         
-        if ($discoveredPath) {
-            $RegistryPath = $discoveredPath
-        } else {
-            Write-Status 'No VMware Tools registry entry found. Already cleaned?' 'Error'
-            exit 1
-        }
-    }
-    
-    $regEntry = Get-ItemProperty -LiteralPath $RegistryPath
-    Write-Status "Found: $($regEntry.DisplayName)" 'Success'
+        $regEntry = Get-ItemProperty -LiteralPath $RegistryPath
+        Write-Status "Found: $($regEntry.DisplayName)" 'Success'
 
-    # Step 1.5: Export registry before deletion
-    Write-Status "`nExporting registry backup..."
+        # Step 1.5: Export registry before deletion
+        Write-Status "`nExporting registry backup..."
     
-    try {
-        if (-not (Test-Path -LiteralPath $ExportPath)) {
-            New-Item -ItemType Directory -Path $ExportPath -Force | Out-Null
-            Write-Status "Created export folder: $ExportPath" 'Success'
-        }
+        try {
+            if (-not (Test-Path -LiteralPath $ExportPath)) {
+                New-Item -ItemType Directory -Path $ExportPath -Force | Out-Null
+                Write-Status "Created export folder: $ExportPath" 'Success'
+            }
         
         $exportFile = Join-Path $ExportPath "VMwareTools_Backup_$timestamp.reg"
         
@@ -180,51 +186,54 @@ try {
         } else {
             throw 'Export file not created'
         }
-    }
-    catch {
-        Write-Status "Failed to export registry: $($_.Exception.Message)" 'Warning'
-    }
-
-    # Step 2: Phase 1 - Try uninstall via MSI
-    Write-Status "`nPhase 1: Attempting MSI uninstall..."
-    $msiUninstallSuccess = $false
-    
-    try {
-        # Get product code from registry
-        $productCode = $regEntry.PSChildName
-        if ($productCode -match '^\{[0-9A-F\-]+\}$') {
-            Write-Host "   Product Code: $productCode" -ForegroundColor Gray
-            
-            if (Get-UserConfirmation 'Execute MSI uninstall?') {
-                $uninstallLog = Join-Path $ExportPath "VMwareTools_Uninstall_$timestamp.log"
-                $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', $uninstallLog) -Wait -PassThru -NoNewWindow -ErrorAction SilentlyContinue
-                
-                Write-Host "   msiexec exit code: $($process.ExitCode)" -ForegroundColor Gray
-                if ($process.ExitCode -in @(0, 3010)) {
-                    $msiUninstallSuccess = $true
-                    Write-Status "Phase 1 (MSI) succeeded! Exit code: $($process.ExitCode)" 'Success'
-                    if ($process.ExitCode -eq 3010) {
-                        Write-Status "Note: Reboot will be required to complete uninstall." 'Info'
-                    }
-                    Start-Sleep -Seconds 2
-                } else {
-                    Write-Status "Phase 1 (MSI) failed with exit code $($process.ExitCode). Proceeding to Phase 2." 'Warning'
-                }
-            } else {
-                Write-Status 'Cancelled by user' 'Warning'
-                exit 2
-            }
-        } else {
-            Write-Status "Invalid product code format: $productCode. Proceeding to Phase 2." 'Warning'
+        }
+        catch {
+            Write-Status "Failed to export registry: $($_.Exception.Message)" 'Warning'
         }
     }
-    catch {
-        Write-Status "Phase 1 error: $($_.Exception.Message)" 'Warning'
-        Write-Status 'Proceeding to Phase 2 (aggressive cleanup)...' 'Info'
+
+    # Step 2: Phase 1 - Try uninstall via MSI (skip in VerifyOnly mode)
+    if (-not $VerifyOnly) {
+        Write-Status "`nPhase 1: Attempting MSI uninstall..."
+        $msiUninstallSuccess = $false
+        
+        try {
+            # Get product code from registry
+            $productCode = $regEntry.PSChildName
+            if ($productCode -match '^\{[0-9A-F\-]+\}$') {
+                Write-Host "   Product Code: $productCode" -ForegroundColor Gray
+                
+                if (Get-UserConfirmation 'Execute MSI uninstall?') {
+                    $uninstallLog = Join-Path $ExportPath "VMwareTools_Uninstall_$timestamp.log"
+                    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $productCode, '/qn', '/norestart', '/l*v', $uninstallLog) -Wait -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+                    
+                    Write-Host "   msiexec exit code: $($process.ExitCode)" -ForegroundColor Gray
+                    if ($process.ExitCode -in @(0, 3010)) {
+                        $msiUninstallSuccess = $true
+                        Write-Status "Phase 1 (MSI) succeeded! Exit code: $($process.ExitCode)" 'Success'
+                        if ($process.ExitCode -eq 3010) {
+                            Write-Status "Note: Reboot will be required to complete uninstall." 'Info'
+                        }
+                        Start-Sleep -Seconds 2
+                    } else {
+                        Write-Status "Phase 1 (MSI) failed with exit code $($process.ExitCode). Proceeding to Phase 2." 'Warning'
+                    }
+                } else {
+                    Write-Status 'Cancelled by user' 'Warning'
+                    exit 2
+                }
+            } else {
+                Write-Status "Invalid product code format: $productCode. Proceeding to Phase 2." 'Warning'
+            }
+        }
+        catch {
+            Write-Status "Phase 1 error: $($_.Exception.Message)" 'Warning'
+            Write-Status 'Proceeding to Phase 2 (aggressive cleanup)...' 'Info'
+        }
     }
 
-    # Step 3: Phase 2 - If Phase 1 failed, aggressive cleanup
-    if (-not $msiUninstallSuccess) {
+    # Step 3: Phase 2 - If Phase 1 failed, aggressive cleanup (skip in VerifyOnly mode)
+    if (-not $VerifyOnly -and -not $msiUninstallSuccess) {
         Write-Status "`nPhase 2: Aggressive cleanup..."
         
         # Stop VMware services
@@ -282,9 +291,9 @@ try {
         }
     }
 
-    # Step 4: Kill remaining VMware processes
+    # Step 4: Kill remaining VMware processes (skip in VerifyOnly mode)
     Write-Status "`nStopping VMware processes..."
-    $vmwareProcesses = Get-Process | Where-Object Name -Match 'vmware' -ErrorAction SilentlyContinue
+    if (-not $VerifyOnly) {
     
     if ($vmwareProcesses) {
         foreach ($proc in $vmwareProcesses) {
@@ -303,35 +312,54 @@ try {
 
     # Step 5: Delete program files
     Write-Status "`nRemoving program files..."
-    
-    $pathsToClean = @(
+    if (-not $VerifyOnly) {
         'C:\Program Files\VMware\VMware Tools',
         'C:\Program Files (x86)\VMware\VMware Tools',
         'C:\Program Files\VMware',
         'C:\Program Files (x86)\VMware'
-    )
+        )
 
-    foreach ($path in $pathsToClean) {
-        if (Test-Path -LiteralPath $path) {
-            try {
-                Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
-                Write-Status "Deleted: $path" 'Success'
-            }
-            catch {
-                Write-Status "Failed to delete $path : $($_.Exception.Message)" 'Warning'
+        foreach ($path in $pathsToClean) {
+            if (Test-Path -LiteralPath $path) {
+                try {
+                    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+                    Write-Status "Deleted: $path" 'Success'
+                }
+                catch {
+                    Write-Status "Failed to delete $path : $($_.Exception.Message)" 'Warning'
+                }
             }
         }
+    } else {
+        Write-Status 'Skipped (VerifyOnly mode)' 'Info'
     }
 
     # Step 6: Phase 3 - Comprehensive verification
     Write-Status "`nPhase 3: Verification..."
     Start-Sleep -Milliseconds 1000
     
-    # Check WMI for VMware products
+    # Check WMI for VMware products and remove if found
     Write-Status "Checking WMI for VMware products..."
     $wmiProducts = Get-WmiObject Win32_Product -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'VMware' }
     if ($wmiProducts) {
-        Write-Status "Warning: WMI shows VMware products: $($wmiProducts.Name -join ', ')" 'Warning'
+        Write-Status "Found VMware products in WMI. Attempting to remove..." 'Warning'
+        foreach ($product in $wmiProducts) {
+            try {
+                Write-Host "   Removing: $($product.Name) (Version: $($product.Version))" -ForegroundColor Gray
+                $product.Uninstall() | Out-Null
+                Write-Status "Removed WMI product: $($product.Name)" 'Success'
+            } catch {
+                Write-Status "Warning: Could not remove WMI product $($product.Name): $($_.Exception.Message)" 'Warning'
+            }
+        }
+        # Verify removal
+        Start-Sleep -Seconds 2
+        $wmiCheck = Get-WmiObject Win32_Product -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'VMware' }
+        if ($wmiCheck) {
+            Write-Status "Warning: VMware products still in WMI after uninstall attempt" 'Warning'
+        } else {
+            Write-Status "All VMware products removed from WMI" 'Success'
+        }
     } else {
         Write-Status "No VMware products found in WMI" 'Success'
     }
@@ -359,22 +387,17 @@ try {
         Write-Status "No VMware Tools entries in registry" 'Success'
     }
 
-    # Step 7: Summary and reboot prompt
+    # Step 7: Summary
     Write-Host "`n" + ('='*60)
     
-    if ($NoReboot) {
-        Write-Status 'Cleanup complete. Reboot skipped per -NoReboot flag.' 'Success'
-        Write-Host "To finish, reboot the system when ready:`n  Restart-Computer -Force`n" -ForegroundColor Yellow
+    if ($VerifyOnly) {
+        Write-Status 'Verification complete. No cleanup was performed.' 'Info'
     } else {
-        if (Get-UserConfirmation 'Reboot now to complete cleanup?') {
-            Write-Status 'Rebooting in 10 seconds...' 'Warning'
-            Start-Sleep -Seconds 10
-            Restart-Computer -Force
-        } else {
-            Write-Status 'Cleanup complete. Please reboot manually to complete the process.' 'Warning'
-            Write-Host "`nReboot command: Restart-Computer -Force`n" -ForegroundColor Yellow
-        }
+        Write-Status 'Cleanup complete.' 'Success'
     }
+    
+    Write-Status 'IMPORTANT: Manual reboot is required to complete the process.' 'Warning'
+    Write-Host "`nReboot command: Restart-Computer -Force`n" -ForegroundColor Yellow
 
     exit 0
 }
