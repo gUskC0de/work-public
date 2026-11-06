@@ -1,0 +1,1 @@
+export const isDeveloperMode = import.meta.env.DEV && import.meta.env.VITE_DEVELOPER_MODE === 'true';

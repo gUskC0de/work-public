@@ -1,0 +1,161 @@
+name: fortigate-dashboard
+
+# Production-oriented baseline. Postgres is intentionally NOT published to the host here —
+# only the api/worker containers reach it over the internal compose network. For local
+# development (host access to Postgres, relaxed filesystem restrictions), see
+# docker-compose.override.yml, which docker compose loads automatically alongside this file.
+#
+# TLS: this file does not terminate TLS anywhere. Production deployments MUST place an
+# approved reverse proxy / ingress controller / cloud load balancer in front of the
+# `frontend` and `api` services and terminate HTTPS there — see README "Transport & TLS".
+
+services:
+  postgres:
+    # Pinned to a specific patch version. Pin further to a digest (postgres:16.4-alpine@sha256:...)
+    # once you have verified the digest for your pull — do not copy a digest from elsewhere.
+    image: postgres:16.4-alpine
+    container_name: fortigate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fortigate_dashboard}
+      POSTGRES_USER: ${POSTGRES_USER:-fortigate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fortigate}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/src/FortiGateDashboard.Api/Dockerfile
+    container_name: fortigate-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__Default: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-fortigate_dashboard};Username=${POSTGRES_USER:-fortigate};Password=${POSTGRES_PASSWORD}"
+      AzureAd__TenantId: ${AZURE_AD_TENANT_ID}
+      AzureAd__ClientId: ${AZURE_AD_API_CLIENT_ID}
+      AzureAd__Audience: ${AZURE_AD_API_AUDIENCE:?Set AZURE_AD_API_AUDIENCE to the API application ID URI}
+      FortiGateCloud__ClientId: ${FORTIGATE_CLOUD_CLIENT_ID}
+      FortiGateCloud__ClientSecret: ${FORTIGATE_CLOUD_CLIENT_SECRET}
+      FortiGateCloud__Username: ${FORTIGATE_CLOUD_USERNAME}
+      FortiGateCloud__Password: ${FORTIGATE_CLOUD_PASSWORD}
+      FortiGateCloud__AccountId: ${FORTIGATE_CLOUD_ACCOUNT_ID:?Set FORTIGATE_CLOUD_ACCOUNT_ID to the numeric FortiCloud account ID}
+      FortiGateCloud__TelemetryEnabled: ${FORTIGATE_CLOUD_TELEMETRY_ENABLED:-true}
+      FortiGateCloud__TelemetryBaseUrl: ${FORTIGATE_CLOUD_TELEMETRY_BASE_URL:-https://euapi.fortigate.forticloud.com/forticloudapi/v1}
+      FortiGateCloud__TelemetryClientId: ${FORTIGATE_CLOUD_TELEMETRY_CLIENT_ID:-fortigatecloud}
+      Notifications__Teams__Enabled: ${TEAMS_NOTIFICATIONS_ENABLED:-false}
+      Notifications__Teams__WebhookUrl: ${TEAMS_WEBHOOK_URL}
+      Notifications__Zabbix__Enabled: ${ZABBIX_NOTIFICATIONS_ENABLED:-false}
+      Notifications__Zabbix__TrapperUrl: ${ZABBIX_TRAPPER_URL}
+      Notifications__Email__Enabled: ${EMAIL_NOTIFICATIONS_ENABLED:-false}
+      Notifications__Email__SmtpHost: ${SMTP_HOST}
+      Notifications__Email__FromAddress: ${SMTP_FROM_ADDRESS}
+      Cors__AllowedOrigins__0: ${FRONTEND_ORIGIN:-http://localhost:5173}
+      # ForwardedHeaders/RateLimiting are left at their appsettings.json defaults here; override
+      # ForwardedHeaders__KnownProxies__0 / KnownNetworks__0 to match your real proxy topology.
+    ports:
+      - "5000:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/logs
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
+    extra_hosts:
+      # Docker Desktop has no IPv6 route here, but its DNS returns Entra's AAAA record first.
+      # Keep this configurable because Microsoft may rotate the endpoint's IPv4 address.
+      - "login.microsoftonline.com:${AZURE_AD_AUTHORITY_IPV4:-20.231.128.67}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/src/FortiGateDashboard.Worker/Dockerfile
+    container_name: fortigate-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DOTNET_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__Default: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-fortigate_dashboard};Username=${POSTGRES_USER:-fortigate};Password=${POSTGRES_PASSWORD}"
+      FortiGateCloud__ClientId: ${FORTIGATE_CLOUD_CLIENT_ID}
+      FortiGateCloud__ClientSecret: ${FORTIGATE_CLOUD_CLIENT_SECRET}
+      FortiGateCloud__Username: ${FORTIGATE_CLOUD_USERNAME}
+      FortiGateCloud__Password: ${FORTIGATE_CLOUD_PASSWORD}
+      FortiGateCloud__AccountId: ${FORTIGATE_CLOUD_ACCOUNT_ID:?Set FORTIGATE_CLOUD_ACCOUNT_ID to the numeric FortiCloud account ID}
+      FortiGateCloud__TelemetryEnabled: ${FORTIGATE_CLOUD_TELEMETRY_ENABLED:-true}
+      FortiGateCloud__TelemetryBaseUrl: ${FORTIGATE_CLOUD_TELEMETRY_BASE_URL:-https://euapi.fortigate.forticloud.com/forticloudapi/v1}
+      FortiGateCloud__TelemetryClientId: ${FORTIGATE_CLOUD_TELEMETRY_CLIENT_ID:-fortigatecloud}
+      Notifications__Teams__Enabled: ${TEAMS_NOTIFICATIONS_ENABLED:-false}
+      Notifications__Teams__WebhookUrl: ${TEAMS_WEBHOOK_URL}
+      Notifications__Zabbix__Enabled: ${ZABBIX_NOTIFICATIONS_ENABLED:-false}
+      Notifications__Zabbix__TrapperUrl: ${ZABBIX_TRAPPER_URL}
+      Notifications__Email__Enabled: ${EMAIL_NOTIFICATIONS_ENABLED:-false}
+      Notifications__Email__SmtpHost: ${SMTP_HOST}
+      Notifications__Email__FromAddress: ${SMTP_FROM_ADDRESS}
+    healthcheck:
+      # The Worker has no HTTP listener; this checks the process is still running as PID 1.
+      test: ["CMD-SHELL", "pgrep -f FortiGateDashboard.Worker.dll || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/logs
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_AZURE_AD_CLIENT_ID: ${AZURE_AD_SPA_CLIENT_ID}
+        VITE_AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID}
+        VITE_API_SCOPE: ${AZURE_AD_API_SCOPE:?Set AZURE_AD_API_SCOPE to the exact exposed API scope URI}
+    container_name: fortigate-frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  postgres-data:
