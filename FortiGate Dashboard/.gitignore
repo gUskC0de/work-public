@@ -1,0 +1,19 @@
+## Build artifacts
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+
+## Environment / secrets
+.env
+**/.env
+**/.env.local
+
+## Editor / OS
+.vscode/
+.vs/
+*.user
+.DS_Store
+
+## Logs
+**/logs/

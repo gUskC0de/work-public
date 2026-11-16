@@ -1,0 +1,134 @@
+ Image fortigate-dashboard-worker Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 756B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.61kB 0.0s done
+#2 DONE 0.0s
+
+#3 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#3 DONE 1.0s
+
+#4 docker-image://docker.io/docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+#4 resolve docker.io/docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32 0.1s done
+#4 CACHED
+
+#5 [internal] load metadata for mcr.microsoft.com/dotnet/runtime:9.0-alpine
+#5 ...
+
+#6 [internal] load metadata for mcr.microsoft.com/dotnet/sdk:9.0
+#6 DONE 0.5s
+
+#5 [internal] load metadata for mcr.microsoft.com/dotnet/runtime:9.0-alpine
+#5 DONE 0.5s
+
+#7 [internal] load .dockerignore
+#7 transferring context: 2B done
+#7 DONE 0.0s
+
+#8 [internal] load build context
+#8 DONE 0.0s
+
+#9 [build  1/13] FROM mcr.microsoft.com/dotnet/sdk:9.0@sha256:01fabc4758d1d74e39eda700c8463dae6241a61481f973683692ddcb59a5eeb7
+#9 resolve mcr.microsoft.com/dotnet/sdk:9.0@sha256:01fabc4758d1d74e39eda700c8463dae6241a61481f973683692ddcb59a5eeb7
+#9 resolve mcr.microsoft.com/dotnet/sdk:9.0@sha256:01fabc4758d1d74e39eda700c8463dae6241a61481f973683692ddcb59a5eeb7 0.1s done
+#9 DONE 0.1s
+
+#10 [runtime 1/4] FROM mcr.microsoft.com/dotnet/runtime:9.0-alpine@sha256:856f27de9ff449b90f53678ca8cd3a090f3eeb2677232cb8e480af6956964a4c
+#10 resolve mcr.microsoft.com/dotnet/runtime:9.0-alpine@sha256:856f27de9ff449b90f53678ca8cd3a090f3eeb2677232cb8e480af6956964a4c 0.1s done
+#10 DONE 0.1s
+
+#11 [build  2/13] WORKDIR /src
+#11 CACHED
+
+#12 [runtime 2/4] WORKDIR /app
+#12 CACHED
+
+#8 [internal] load build context
+#8 transferring context: 148.72kB 0.1s done
+#8 DONE 0.1s
+
+#13 [build  3/13] COPY backend/FortiGateDashboard.sln ./
+#13 DONE 0.1s
+
+#14 [runtime 3/4] RUN addgroup -S appgroup && adduser -S appuser -G appgroup && apk add --no-cache procps
+#14 ...
+
+#15 [build  4/13] COPY backend/src/FortiGateDashboard.Api/FortiGateDashboard.Api.csproj src/FortiGateDashboard.Api/
+#15 DONE 0.1s
+
+#16 [build  5/13] COPY backend/src/FortiGateDashboard.Core/FortiGateDashboard.Core.csproj src/FortiGateDashboard.Core/
+#16 DONE 0.1s
+
+#14 [runtime 3/4] RUN addgroup -S appgroup && adduser -S appuser -G appgroup && apk add --no-cache procps
+#14 ...
+
+#17 [build  6/13] COPY backend/src/FortiGateDashboard.Infrastructure/FortiGateDashboard.Infrastructure.csproj src/FortiGateDashboard.Infrastructure/
+#17 DONE 0.1s
+
+#18 [build  7/13] COPY backend/src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj src/FortiGateDashboard.Worker/
+#18 DONE 0.1s
+
+#14 [runtime 3/4] RUN addgroup -S appgroup && adduser -S appuser -G appgroup && apk add --no-cache procps
+#14 ...
+
+#19 [build  8/13] COPY backend/tests/FortiGateDashboard.UnitTests/FortiGateDashboard.UnitTests.csproj tests/FortiGateDashboard.UnitTests/
+#19 DONE 0.1s
+
+#20 [build  9/13] COPY backend/tests/FortiGateDashboard.IntegrationTests/FortiGateDashboard.IntegrationTests.csproj tests/FortiGateDashboard.IntegrationTests/
+#20 DONE 0.2s
+
+#14 [runtime 3/4] RUN addgroup -S appgroup && adduser -S appuser -G appgroup && apk add --no-cache procps
+#14 1.290 (1/7) Installing libintl (1.0-r0)
+#14 1.319 (2/7) Installing ncurses-terminfo-base (6.6_p20260516-r0)
+#14 1.359 (3/7) Installing libncursesw (6.6_p20260516-r0)
+#14 1.390 (4/7) Installing skalibs-libs (2.15.0.0-r0)
+#14 1.412 (5/7) Installing utmps-libs (0.1.3.3-r0)
+#14 1.426 (6/7) Installing libproc2 (4.0.6-r0)
+#14 1.449 (7/7) Installing procps-ng (4.0.6-r0)
+#14 1.483 Executing busybox-1.37.0-r31.trigger
+#14 1.493 OK: 12.4 MiB in 25 packages
+#14 DONE 1.6s
+
+#21 [build 10/13] RUN dotnet restore FortiGateDashboard.sln
+#21 1.839   Determining projects to restore...
+#21 2.879   Restored /src/src/FortiGateDashboard.Core/FortiGateDashboard.Core.csproj (in 191 ms).
+#21 19.28   Restored /src/tests/FortiGateDashboard.UnitTests/FortiGateDashboard.UnitTests.csproj (in 16.66 sec).
+#21 19.28   Restored /src/src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj (in 16.66 sec).
+#21 22.27   Restored /src/src/FortiGateDashboard.Infrastructure/FortiGateDashboard.Infrastructure.csproj (in 19.65 sec).
+#21 25.58   Restored /src/tests/FortiGateDashboard.IntegrationTests/FortiGateDashboard.IntegrationTests.csproj (in 22.97 sec).
+#21 25.58   Restored /src/src/FortiGateDashboard.Api/FortiGateDashboard.Api.csproj (in 22.97 sec).
+#21 DONE 26.1s
+
+#22 [build 11/13] COPY backend/src src
+#22 DONE 0.4s
+
+#23 [build 12/13] COPY backend/tests tests
+#23 DONE 0.3s
+
+#24 [build 13/13] RUN dotnet publish src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj -c Release -o /app --no-restore
+#24 1.770 /usr/share/dotnet/sdk/9.0.318/Sdks/Microsoft.NET.Sdk/targets/Microsoft.PackageDependencyResolution.targets(266,5): error NETSDK1064: Package Microsoft.EntityFrameworkCore.Analyzers, version 9.0.9 was not found. It might have been deleted since NuGet restore. Otherwise, NuGet restore might have only partially completed, which might have been due to maximum path length restrictions. [/src/src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj]
+#24 ERROR: process "/bin/sh -c dotnet publish src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj -c Release -o /app --no-restore" did not complete successfully: exit code: 1
+------
+ > [build 13/13] RUN dotnet publish src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj -c Release -o /app --no-restore:
+1.770 /usr/share/dotnet/sdk/9.0.318/Sdks/Microsoft.NET.Sdk/targets/Microsoft.PackageDependencyResolution.targets(266,5): error NETSDK1064: Package Microsoft.EntityFrameworkCore.Analyzers, version 9.0.9 was not found. It might have been deleted since NuGet restore. Otherwise, NuGet restore might have only partially completed, which might have been due to maximum path length restrictions. [/src/src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj]
+------
+Dockerfile:18
+
+--------------------
+
+  16 |     COPY backend/src src
+
+  17 |     COPY backend/tests tests
+
+  18 | >>> RUN dotnet publish src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj -c Release -o /app --no-restore
+
+  19 |     
+
+  20 |     FROM mcr.microsoft.com/dotnet/runtime:9.0-alpine AS runtime
+
+--------------------
+
+failed to solve: process "/bin/sh -c dotnet publish src/FortiGateDashboard.Worker/FortiGateDashboard.Worker.csproj -c Release -o /app --no-restore" did not complete successfully: exit code: 1
+
